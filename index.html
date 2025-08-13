@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Auto Service Intake</title>
+  <link rel="stylesheet" href="styles/style.css" />
+</head>
+<body>
+  <div class="app" id="app">
+    <header>
+      <h1>Auto Service Intake</h1>
+      <div class="right">
+        <span class="pill">Mode: <strong id="modeLabel">Customer</strong></span>
+        <span class="time" id="clock"></span>
+      </div>
+    </header>
+    <div class="content" id="view"></div>
+  </div>
+
+  <!-- Order matters: trees.js defines TREES, app.js uses it -->
+  <script src="js/trees.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
