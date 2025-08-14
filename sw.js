@@ -1,4 +1,4 @@
-const CACHE = "intake-v10"; // bump this when ASSETS change
+const CACHE = "intake-v11"; // bump this when ASSETS change
 const ASSETS = [
   "./",
   "./index.html",
