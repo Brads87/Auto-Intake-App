@@ -271,20 +271,17 @@ function renderLanding(){
     </div>
   ` : "";
 
-  view.innerHTML = `
-    <div class="card">
-      <div class="flex" style="justify-content:space-between">
-        <div>
-          <div class="muted">Welcome</div>
-          <h2 style="margin:.2rem 0 0">What would you like to do?</h2>
-        </div>
-        <div class="flex" style="gap:8px">
-          <button class="btn secondary" onclick="enterStaffMode()">Staff</button>
-        </div>
+view.innerHTML = `
+  <div class="card">
+    <div class="flex" style="justify-content:space-between">
+      <div>
+        <div class="muted">Welcome</div>
+        <h2 style="margin:.2rem 0 0">We Are Here For you!</h2>
       </div>
     </div>
+  </div>
 
-    <div class="divider"></div>
+  <div class="divider"></div>
 
     <div class="grid">
       <div class="card">
@@ -295,7 +292,7 @@ function renderLanding(){
 
       <div class="card">
         <div class="muted">Step 2</div>
-        <h3 style="margin:6px 0 12px">What brings you in?</h3>
+        <h3 style="margin:6px 0 12px">Customer Concern</h3>
         <label>Describe in your own words</label>
         <textarea id="brought" placeholder="Example: Car is overheating at stop lights and heater blows cold at idle."></textarea>
         <div class="row">
