@@ -62,10 +62,10 @@ window.TREES = {
       },
       o_restriction: {
         type: "outcome",
-        title: "Airflow/coolant restriction suspected",
+        title: "Coolant flow issue, Possible bad water pump, Thermostat or coolant restriction suspected",
         notes: [
           "Overheats under load/highway.",
-          "Possible clogged radiator, airflow restriction, or thermostat issue."
+          "Possible clogged radiator, airflow restriction, failing water pump, or thermostat issue."
         ],
         priority: "Moderate"
       },
