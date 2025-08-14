@@ -1,3 +1,99 @@
+// ==============================
+// Simple staff PIN (change it)
+// ==============================
+const STAFF_PIN = "5655";
+
+// keep recent intakes on THIS device only (not synced)
+const MAX_LOCAL_HISTORY = 25;
+function saveLocalIntake(intake) {
+  try {
+    const k = "intakeHistory";
+    const arr = JSON.parse(localStorage.getItem(k) || "[]");
+    arr.unshift(intake);
+    localStorage.setItem(k, JSON.stringify(arr.slice(0, MAX_LOCAL_HISTORY)));
+  } catch {}
+}
+
+// ==============================
+// Staff mode helpers (NEW)
+// - Reads from intakeHistory (auto-saved on outcome)
+// ==============================
+function enterStaffMode(){
+  const pin = prompt("Staff PIN:");
+  if (pin === STAFF_PIN) {
+    state.isStaff = true;     // ✅ mark as staff
+    renderStaffView();
+  } else {
+    alert("Incorrect PIN");
+  }
+}
+
+function exitStaffMode(){
+  state.isStaff = false;  // ✅ mark as not staff
+  renderLanding();
+}
+
+
+
+function renderStaffView(){
+  const k = "intakeHistory";
+  const data = JSON.parse(localStorage.getItem(k) || "[]");
+
+  const rows = data.map((x,i)=>`
+    <tr>
+      <td>${i+1}</td>
+      <td>${x.ro || "—"}</td>
+      <td>${x.vehicle?.year || "—"} ${x.vehicle?.make || ""} ${x.vehicle?.model || ""}</td>
+      <td>${x.topic || "—"}</td>
+      <td>${new Date(x.when).toLocaleString()}</td>
+      <td><button class="btn" onclick='viewIntake(${i})'>Open</button></td>
+    </tr>
+  `).join("");
+
+  const table = data.length
+    ? `<table class="table">
+         <thead><tr><th>#</th><th>RO</th><th>Vehicle</th><th>Topic</th><th>Time</th><th></th></tr></thead>
+         <tbody>${rows}</tbody>
+       </table>`
+    : "<div class='muted'>No intakes saved on this device yet.</div>";
+
+  const container = document.getElementById("view");
+  if (container) {
+    container.innerHTML = `
+      <div class="card">
+        <h2>Staff — Recent Intakes (this device)</h2>
+        ${table}
+        <div class="actions" style="margin-top:12px">
+          <button class="btn secondary" onclick="exitStaffMode()">Exit</button>
+        </div>
+      </div>`;
+  }
+}
+
+function viewIntake(idx){
+  const k = "intakeHistory";
+  const data = JSON.parse(localStorage.getItem(k) || "[]");
+  const x = data[idx]; if(!x) return;
+
+  document.querySelector("#view").innerHTML = `
+    <div class="card">
+      <h2>Intake Summary ${x.ro ? `(RO: ${x.ro})` : ""}</h2>
+      <div class="row">When: ${new Date(x.when).toLocaleString()}</div>
+      <div class="row">Vehicle: ${x.vehicle?.year || "—"} ${x.vehicle?.make || ""} ${x.vehicle?.model || ""}</div>
+      <pre class="code" style="white-space:pre-wrap;">${JSON.stringify(x.answers, null, 2)}</pre>
+      <div class="actions">
+        <button class="btn" onclick="window.print()">Print</button>
+        <button class="btn secondary" onclick="renderStaffView()">Back</button>
+      </div>
+    </div>`;
+}
+
+
+
+// ==============================
+// Your TREES (unchanged)
+// ==============================
+
 // Define your intake trees here. Easy to expand without touching app.js.
 // You can add more topics by following the same structure.
 
@@ -133,6 +229,7 @@ window.TREES = {
     }
   }
 };
+
 // ---------- Utilities ----------
 const $ = (sel) => document.querySelector(sel);
 const view = $("#view");
@@ -141,14 +238,17 @@ function escapeHtml(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").repl
 function fmtDateTime(ts) { return new Date(ts).toLocaleString(); }
 
 // ---------- App State ----------
+// ---------- App State ----------
 const state = {
   mode: "customer", // or "mechanic"
+  isStaff: false,   // NEW — tracks if staff is logged in
   activeTreeKey: null,
-  trail: [],        // [{type:'question'|'outcome', nodeId, prompt, choiceLabel?, multi?, prevNodeId?}]
-  answers: {},      // for multi-select keys
+  trail: [],        // [{type:'question'|'outcome', ...}]
+  answers: {},
   identity: { name:"", phone:"", email:"", year:"", make:"", model:"", mileage:"", vin:"", plate:"" },
   visit: { broughtInFor:"", startTime: Date.now() }
 };
+
 
 function progressPct() {
   if (!state.activeTreeKey) return 0;
@@ -159,6 +259,20 @@ function progressPct() {
 // ---------- Landing ----------
 function renderLanding(){
   $("#modeLabel").textContent = state.mode === "customer" ? "Customer" : "Mechanic";
+
+  // Build the submissions section only if staff
+  const submissionsSection = state.isStaff ? `
+    <div class="divider"></div>
+    <div class="card">
+      <div class="muted">Saved Intakes on this device (manual saves)</div>
+      <h3 style="margin:6px 0 12px">Submissions</h3>
+      <div id="subs">${renderSubmissionsList()}</div>
+      <div class="muted" style="margin-top:6px">
+        Note: Staff auto-saved outcomes are under the Staff button (PIN).
+      </div>
+    </div>
+  ` : "";
+
   view.innerHTML = `
     <div class="card">
       <div class="flex" style="justify-content:space-between">
@@ -166,7 +280,10 @@ function renderLanding(){
           <div class="muted">Welcome</div>
           <h2 style="margin:.2rem 0 0">What would you like to do?</h2>
         </div>
-        <button class="btn secondary" onclick="toggleMode()">Switch to ${state.mode==='customer'?'Mechanic':'Customer'} mode</button>
+        <div class="flex" style="gap:8px">
+          <button class="btn secondary" onclick="enterStaffMode()">Staff</button>
+          <button class="btn secondary" onclick="toggleMode()">Switch to ${state.mode==='customer'?'Mechanic':'Customer'} mode</button>
+        </div>
       </div>
     </div>
 
@@ -197,13 +314,7 @@ function renderLanding(){
       </div>
     </div>
 
-    <div class="divider"></div>
-
-    <div class="card">
-      <div class="muted">Saved Intakes on this device</div>
-      <h3 style="margin:6px 0 12px">Submissions</h3>
-      <div id="subs">${renderSubmissionsList()}</div>
-    </div>
+    ${submissionsSection}
   `;
 
   // hydrate fields
@@ -213,6 +324,7 @@ function renderLanding(){
   $("#mileage").value = id.mileage; $("#vin").value = id.vin; $("#plate").value = id.plate;
   $("#brought").value = state.visit.broughtInFor || "";
 }
+
 
 function renderIdentityForm(){
   return `
@@ -383,17 +495,44 @@ function answerSingle(nodeId, idx){
   const tree = TREES[state.activeTreeKey];
   const node = tree.nodes[nodeId];
   const opt = node.options[idx];
-  state.trail.push({ type:"question", nodeId, prompt: node.prompt, choiceLabel: opt.label, prevNodeId: nodeId });
+
+  state.trail.push({
+    type: "question",
+    nodeId,
+    prompt: node.prompt,
+    choiceLabel: opt.label,
+    prevNodeId: nodeId
+  });
 
   const nextId = opt.next;
   const next = tree.nodes[nextId];
-  if(!next){ alert("End of branch."); renderLanding(); return; }
-  if(next.type === "outcome"){ state.trail.push({type:"outcome", nodeId: nextId}); renderOutcome(nextId); }
-  else renderQuestion(nextId);
+  if (!next) {
+    alert("End of branch.");
+    renderLanding();
+    return;
+  }
+
+  if (next.type === "outcome") {
+    state.trail.push({ type: "outcome", nodeId: nextId });
+
+    const intake = {
+      ro: state.visit?.ro || "",
+      when: new Date().toISOString(),
+      vehicle: state.vehicle || {},
+      answers: state.answers || [],
+      topic: state.activeTreeKey || ""
+    };
+    saveLocalIntake(intake);
+
+    renderOutcome(nextId);
+  } else {
+    renderQuestion(nextId);
+  }
 }
 
 function toggleMulti(key, checked){
-  if(checked) state.answers[key] = true; else delete state.answers[key];
+  if (checked) state.answers[key] = true;
+  else delete state.answers[key];
 }
 
 function goNextFromMulti(nodeId){
@@ -401,12 +540,26 @@ function goNextFromMulti(nodeId){
   const node = tree.nodes[nodeId];
   const labels = (node.options||[])
     .filter((opt,i)=> state.answers[opt.key || `${nodeId}_${i}`])
-    .map(opt=>opt.label);
+    .map(opt=> opt.label);
 
   state.trail.push({ type:"question", nodeId, prompt: node.prompt, multi: labels, prevNodeId: nodeId });
+
   const nextId = node.next;
-  if (tree.nodes[nextId].type === "outcome"){
-    state.trail.push({type:"outcome", nodeId: nextId});
+  const next = tree.nodes[nextId];
+  if (!next) { alert("End of branch."); renderLanding(); return; } // <-- safety guard
+
+  if (next.type === "outcome") {
+    state.trail.push({ type:"outcome", nodeId: nextId });
+
+    const intake = {
+      ro: state.visit?.ro || "",
+      when: new Date().toISOString(),
+      vehicle: state.vehicle || {},
+      answers: state.answers || [],
+      topic: state.activeTreeKey || ""
+    };
+    saveLocalIntake(intake);
+
     renderOutcome(nextId);
   } else {
     renderQuestion(nextId);
@@ -493,7 +646,7 @@ function deleteSaved(id){
 }
 
 // ---------- Clock + boot ----------
-function tickClock(){ $("#clock").textContent = new Date().toLocaleString(); }
+function tickClock(){ const el = $("#clock"); if (el) el.textContent = new Date().toLocaleString(); }
 setInterval(tickClock, 1000);
 tickClock();
 renderLanding();
