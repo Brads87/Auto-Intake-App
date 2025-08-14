@@ -15,7 +15,7 @@
     <header>
       <h1>Auto Service Intake</h1>
       <div class="right">
-        <span class="pill">Mode: <strong id="modeLabel">Customer</strong></span>
+       
         <span class="time" id="clock"></span>
         <button class="btn secondary" onclick="enterStaffMode()">Staff</button>
       </div>
@@ -25,14 +25,14 @@
   <!-- Existing intake form markup goes here -->
 
 <!-- Staff-only access section -->
-<div id="staffLogin" style="margin-top:20px;">
+
   <h3>Staff Access</h3>
   <input type="password" id="staffPin" placeholder="Enter PIN">
   <button onclick="checkStaffPin()">Login</button>
 </div>
 
 <!-- Hidden saved intake list -->
-<div id="savedIntakes" style="display:none; margin-top:20px;">
+
   <h2>Previous Intakes</h2>
   <div id="intakeList"></div>
 </div>

@@ -21,15 +21,16 @@ function saveLocalIntake(intake) {
 function enterStaffMode(){
   const pin = prompt("Staff PIN:");
   if (pin === STAFF_PIN) {
-    state.isStaff = true;     // ✅ mark as staff
+    state.isStaff = true;    // ✅ now marked as staff
     renderStaffView();
   } else {
     alert("Incorrect PIN");
   }
 }
 
+
 function exitStaffMode(){
-  state.isStaff = false;  // ✅ mark as not staff
+  state.isStaff = false;     // ✅ staff mode off
   renderLanding();
 }
 
@@ -240,10 +241,9 @@ function fmtDateTime(ts) { return new Date(ts).toLocaleString(); }
 // ---------- App State ----------
 // ---------- App State ----------
 const state = {
-  mode: "customer", // or "mechanic"
-  isStaff: false,   // NEW — tracks if staff is logged in
+  isStaff: false,   // tracks if staff is logged in
   activeTreeKey: null,
-  trail: [],        // [{type:'question'|'outcome', ...}]
+  trail: [],
   answers: {},
   identity: { name:"", phone:"", email:"", year:"", make:"", model:"", mileage:"", vin:"", plate:"" },
   visit: { broughtInFor:"", startTime: Date.now() }
@@ -459,10 +459,7 @@ function renderOutcome(nodeId){
 function kv(k,v){ return `<div class="kv"><div class="muted">${k}</div><div class="hl">${v}</div></div>`; }
 
 // ---------- Actions ----------
-function toggleMode(){
-  state.mode = state.mode === "customer" ? "mechanic" : "customer";
-  renderLanding();
-}
+
 
 function startIntake(){
   const topic = $("#topic").value;

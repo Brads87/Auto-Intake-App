@@ -1,9 +1,8 @@
-const CACHE = "intake-v5"; // bump this when ASSETS change
+const CACHE = "intake-v6"; // bump this when ASSETS change
 const ASSETS = [
   "./",
   "./index.html",
   "./styles/style.css",
-  "./js/trees.js",
   "./js/app.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
