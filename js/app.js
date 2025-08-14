@@ -258,9 +258,7 @@ function progressPct() {
 
 // ---------- Landing ----------
 function renderLanding(){
-  $("#modeLabel").textContent = state.mode === "customer" ? "Customer" : "Mechanic";
-
-  // Build the submissions section only if staff
+  // Only render submissions if staff
   const submissionsSection = state.isStaff ? `
     <div class="divider"></div>
     <div class="card">
@@ -282,7 +280,6 @@ function renderLanding(){
         </div>
         <div class="flex" style="gap:8px">
           <button class="btn secondary" onclick="enterStaffMode()">Staff</button>
-          <button class="btn secondary" onclick="toggleMode()">Switch to ${state.mode==='customer'?'Mechanic':'Customer'} mode</button>
         </div>
       </div>
     </div>
@@ -324,7 +321,6 @@ function renderLanding(){
   $("#mileage").value = id.mileage; $("#vin").value = id.vin; $("#plate").value = id.plate;
   $("#brought").value = state.visit.broughtInFor || "";
 }
-
 
 function renderIdentityForm(){
   return `

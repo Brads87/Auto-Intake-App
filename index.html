@@ -6,7 +6,6 @@
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#0f172a">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-
   <title>Auto Service Intake</title>
   <link rel="stylesheet" href="styles/style.css" />
 </head>
@@ -15,39 +14,21 @@
     <header>
       <h1>Auto Service Intake</h1>
       <div class="right">
-       
         <span class="time" id="clock"></span>
         <button class="btn secondary" onclick="enterStaffMode()">Staff</button>
       </div>
     </header>
     <div class="content" id="view"></div>
   </div>
-  <!-- Existing intake form markup goes here -->
 
-<!-- Staff-only access section -->
-
-  <h3>Staff Access</h3>
-  <input type="password" id="staffPin" placeholder="Enter PIN">
-  <button onclick="checkStaffPin()">Login</button>
-</div>
-
-<!-- Hidden saved intake list -->
-
-  <h2>Previous Intakes</h2>
-  <div id="intakeList"></div>
-</div>
-
-
-  <!-- Order matters: trees.js defines TREES, app.js uses it -->
   <script src="js/app.js"></script>
   <script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      // If you host under a subfolder, use 'sw.js' (relative), not '/sw.js'
-      navigator.serviceWorker.register('sw.js');
-    });
-  }
-</script>
-
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        // use relative path if hosted under a subfolder
+        navigator.serviceWorker.register('sw.js');
+      });
+    }
+  </script>
 </body>
 </html>
