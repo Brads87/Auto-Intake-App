@@ -13,6 +13,45 @@ function saveLocalIntake(intake) {
     localStorage.setItem(k, JSON.stringify(arr.slice(0, MAX_LOCAL_HISTORY)));
   } catch {}
 }
+// ADD THIS DIRECTLY UNDER saveLocalIntake(...) — do not modify saveLocalIntake.
+function buildAutoSavedIntake(outcomeId){
+  const tree = TREES[state.activeTreeKey] || {};
+  const outcomeNode = tree.nodes?.[outcomeId] || {};
+  return {
+    // quick filters
+    topic: state.activeTreeKey || "",
+    outcomeId,
+    outcomeTitle: outcomeNode.title || "—",
+    priority: outcomeNode.priority || "—",
+
+    // timing
+    when: new Date().toISOString(),
+    visit: {
+      broughtInFor: state.visit?.broughtInFor || "",
+      startTime: state.visit?.startTime || Date.now(),
+      endTime: Date.now()
+    },
+
+    // identity / vehicle (derived from identity fields)
+    identity: structuredClone(state.identity),
+    vehicle: {
+      year: state.identity?.year || "",
+      make: state.identity?.make || "",
+      model: state.identity?.model || "",
+      mileage: state.identity?.mileage || "",
+      vin: state.identity?.vin || "",
+      plate: state.identity?.plate || ""
+    },
+
+    // Q/A details
+    trail: structuredClone(state.trail),
+    answers: structuredClone(state.answers),
+
+    // optional shop field
+    ro: state.visit?.ro || ""
+  };
+}
+
 
 // ==============================
 // Staff mode helpers (NEW)
@@ -40,20 +79,31 @@ function renderStaffView(){
   const k = "intakeHistory";
   const data = JSON.parse(localStorage.getItem(k) || "[]");
 
-  const rows = data.map((x,i)=>`
+  // Newest first
+  data.sort((a, b) =>
+    new Date(b.visit?.startTime || b.when) - new Date(a.visit?.startTime || a.when)
+  );
+
+  const rows = data.map((x, i) => `
     <tr>
-      <td>${i+1}</td>
+      <td>${i + 1}</td>
       <td>${x.ro || "—"}</td>
-      <td>${x.vehicle?.year || "—"} ${x.vehicle?.make || ""} ${x.vehicle?.model || ""}</td>
-      <td>${x.topic || "—"}</td>
-      <td>${new Date(x.when).toLocaleString()}</td>
+      <td>
+        ${(x.identity?.year || x.vehicle?.year || "—")}
+        ${(x.identity?.make || x.vehicle?.make || "")}
+        ${(x.identity?.model || x.vehicle?.model || "")}
+      </td>
+      <td>${(window.TREES?.[x.topic]?.title || x.topic || "—")}</td>
+      <td>${new Date(x.visit?.startTime || x.when).toLocaleString()}</td>
       <td><button class="btn" onclick='viewIntake(${i})'>Open</button></td>
     </tr>
   `).join("");
 
   const table = data.length
     ? `<table class="table">
-         <thead><tr><th>#</th><th>RO</th><th>Vehicle</th><th>Topic</th><th>Time</th><th></th></tr></thead>
+         <thead>
+           <tr><th>#</th><th>RO</th><th>Vehicle</th><th>Topic</th><th>Time</th><th></th></tr>
+         </thead>
          <tbody>${rows}</tbody>
        </table>`
     : "<div class='muted'>No intakes saved on this device yet.</div>";
@@ -71,23 +121,80 @@ function renderStaffView(){
   }
 }
 
+
 function viewIntake(idx){
   const k = "intakeHistory";
   const data = JSON.parse(localStorage.getItem(k) || "[]");
-  const x = data[idx]; if(!x) return;
+  const x = data[idx]; 
+  if (!x) return;
+
+  // Build a readable Q&A trail; fall back to raw answers if the trail isn't present
+  const answersSummary = Array.isArray(x.trail) && x.trail.length
+    ? x.trail
+        .filter(step => step.type !== "outcome")
+        .map((step, i) => {
+          if (step.choiceLabel) return `${i+1}. ${step.prompt} — ${step.choiceLabel}`;
+          if (step.multi && step.multi.length) return `${i+1}. ${step.prompt} — ${step.multi.join(", ")}`;
+          return `${i+1}. ${step.prompt}`;
+        })
+        .join("<br>")
+    : (Object.keys(x.answers || {}).length 
+        ? escapeHtml(JSON.stringify(x.answers, null, 2)) 
+        : "—");
+
+  // Prefer identity fields for vehicle, fall back to any old vehicle field
+  const year  = x.identity?.year  || x.vehicle?.year  || "—";
+  const make  = x.identity?.make  || x.vehicle?.make  || "";
+  const model = x.identity?.model || x.vehicle?.model || "";
+
+  const created = x.visit?.startTime 
+    ? new Date(x.visit.startTime).toLocaleString() 
+    : (x.when ? new Date(x.when).toLocaleString() : "—");
 
   document.querySelector("#view").innerHTML = `
     <div class="card">
-      <h2>Intake Summary ${x.ro ? `(RO: ${x.ro})` : ""}</h2>
-      <div class="row">When: ${new Date(x.when).toLocaleString()}</div>
-      <div class="row">Vehicle: ${x.vehicle?.year || "—"} ${x.vehicle?.make || ""} ${x.vehicle?.model || ""}</div>
-      <pre class="code" style="white-space:pre-wrap;">${JSON.stringify(x.answers, null, 2)}</pre>
+      <div class="muted">Outcome</div>
+      <h2 style="margin:6px 0 10px">
+        ${x.outcomeTitle || "Intake Summary"} ${x.ro ? `(RO: ${x.ro})` : ""}
+      </h2>
+      <div class="row"><span class="tag">Priority: ${x.priority || "—"}</span></div>
+
+      <div class="two-col">
+        <div>
+          <div class="muted">Customer's own words</div>
+          <div class="card" style="margin-top:6px">
+            ${escapeHtml(x.visit?.broughtInFor || "—")}
+          </div>
+
+          <div class="row"></div>
+          <div class="muted">Structured answers</div>
+          <div class="card" style="margin-top:6px; line-height:1.6">
+            ${answersSummary || "—"}
+          </div>
+        </div>
+
+        <div>
+          <div class="muted">Vehicle</div>
+          <div class="card" style="margin-top:6px">
+            ${kv("Name", x.identity?.name || "—")}
+            ${kv("Phone", x.identity?.phone || "—")}
+            ${kv("Email", x.identity?.email || "—")}
+            ${kv("Year/Make/Model", `${year} ${make} ${model}`.trim())}
+            ${kv("Mileage", x.identity?.mileage || x.vehicle?.mileage || "—")}
+            ${kv("VIN", x.identity?.vin || x.vehicle?.vin || "—")}
+            ${kv("Plate", x.identity?.plate || x.vehicle?.plate || "—")}
+            ${kv("Created", created)}
+          </div>
+        </div>
+      </div>
+
       <div class="actions">
         <button class="btn" onclick="window.print()">Print</button>
         <button class="btn secondary" onclick="renderStaffView()">Back</button>
       </div>
     </div>`;
 }
+
 
 
 
@@ -458,6 +565,7 @@ function startIntake(){
   const topic = $("#topic").value;
   state.visit.broughtInFor = $("#brought").value.trim();
   if(!topic){ alert("Pick a topic to begin."); return; }
+  state.visit.startTime = Date.now();
   state.activeTreeKey = topic;
   state.trail = [];
   state.answers = {};
@@ -484,8 +592,9 @@ function goBack(){
 function answerSingle(nodeId, idx){
   const tree = TREES[state.activeTreeKey];
   const node = tree.nodes[nodeId];
-  const opt = node.options[idx];
+  const opt  = node.options[idx];
 
+  // record this answer in the trail
   state.trail.push({
     type: "question",
     nodeId,
@@ -495,7 +604,7 @@ function answerSingle(nodeId, idx){
   });
 
   const nextId = opt.next;
-  const next = tree.nodes[nextId];
+  const next   = tree.nodes[nextId];
   if (!next) {
     alert("End of branch.");
     renderLanding();
@@ -504,21 +613,14 @@ function answerSingle(nodeId, idx){
 
   if (next.type === "outcome") {
     state.trail.push({ type: "outcome", nodeId: nextId });
-
-    const intake = {
-      ro: state.visit?.ro || "",
-      when: new Date().toISOString(),
-      vehicle: state.vehicle || {},
-      answers: state.answers || [],
-      topic: state.activeTreeKey || ""
-    };
-    saveLocalIntake(intake);
-
+    saveLocalIntake(buildAutoSavedIntake(nextId));   // save full record
     renderOutcome(nextId);
   } else {
     renderQuestion(nextId);
   }
 }
+
+
 
 function toggleMulti(key, checked){
   if (checked) state.answers[key] = true;
@@ -528,33 +630,26 @@ function toggleMulti(key, checked){
 function goNextFromMulti(nodeId){
   const tree = TREES[state.activeTreeKey];
   const node = tree.nodes[nodeId];
-  const labels = (node.options||[])
-    .filter((opt,i)=> state.answers[opt.key || `${nodeId}_${i}`])
-    .map(opt=> opt.label);
+  const labels = (node.options || [])
+    .filter((opt, i) => state.answers[opt.key || `${nodeId}_${i}`])
+    .map(opt => opt.label);
 
-  state.trail.push({ type:"question", nodeId, prompt: node.prompt, multi: labels, prevNodeId: nodeId });
+  state.trail.push({ type: "question", nodeId, prompt: node.prompt, multi: labels, prevNodeId: nodeId });
 
   const nextId = node.next;
   const next = tree.nodes[nextId];
-  if (!next) { alert("End of branch."); renderLanding(); return; } // <-- safety guard
+  if (!next) { alert("End of branch."); renderLanding(); return; } // safety guard
 
+  // ✅ Use the rich auto-save here
   if (next.type === "outcome") {
-    state.trail.push({ type:"outcome", nodeId: nextId });
-
-    const intake = {
-      ro: state.visit?.ro || "",
-      when: new Date().toISOString(),
-      vehicle: state.vehicle || {},
-      answers: state.answers || [],
-      topic: state.activeTreeKey || ""
-    };
-    saveLocalIntake(intake);
-
+    state.trail.push({ type: "outcome", nodeId: nextId });
+    saveLocalIntake(buildAutoSavedIntake(nextId));
     renderOutcome(nextId);
   } else {
     renderQuestion(nextId);
   }
 }
+
 
 function printSummary(){ window.print(); }
 
