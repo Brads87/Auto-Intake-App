@@ -104,7 +104,11 @@ function recordBadAttempt(){
 }
 function clearLockout(){ setLockState({}); }
 
-function requireStaffUnlockIfNeeded(){ if(!STAFF_UNLOCKED){ showModal(true); return false; } return true; }
+// Don't auto-open the modal; only open it from the Unlock button
+function requireStaffUnlockIfNeeded(){
+  return !!STAFF_UNLOCKED;  // true if unlocked, false if locked (no modal)
+}
+
 
 // secure I/O helpers for history
 async function loadDecryptedHistory(){
@@ -731,6 +735,15 @@ function renderOutcome(nodeId){
 
 function kv(k,v){ return `<div class="kv"><div class="muted">${k}</div><div class="hl">${v}</div></div>`; }
 
+function resetForNewIntake(){
+  state.activeTreeKey = null;
+  state.trail = [];
+  state.answers = {};
+  state.identity = { name:"", phone:"", email:"", year:"", make:"", model:"", mileage:"", vin:"", plate:"" };
+  state.visit = { broughtInFor:"", startTime: Date.now(), ro: "" };
+}
+
+
 // ---------- Actions ----------
 
 
@@ -747,9 +760,7 @@ function startIntake(){
 
 function cancelIntake(){
   if(confirm("Cancel this intake? Your answers for this session will be cleared.")){
-    state.activeTreeKey = null;
-    state.trail = [];
-    state.answers = {};
+    resetForNewIntake();
     renderLanding();
   }
 }
@@ -843,7 +854,11 @@ function saveSubmission(finalOutcomeId){
   all.unshift(payload);
   localStorage.setItem("auto_intakes", JSON.stringify(all));
   alert("Saved to this device.");
+
+  // 👇 clear everything so the landing form is fresh
+  resetForNewIntake();
   renderLanding();
+  window.scrollTo(0, 0);
 }
 
 function buildSubmissionPayload(id, finalOutcomeId){
