@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#0f172a">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <title>Auto Service Intake</title>
-  <link rel="stylesheet" href="styles/style.css" />
+  <link rel="stylesheet" href="styles/style.css?v=2025-08-15c" />
 </head>
 <body>
   <div class="app" id="app">
@@ -17,7 +17,7 @@
     <span class="time" id="clock"></span>
   </div>
 
-  <!-- Staff Bar -->
+
   <div id="staffBar" style="display:flex;gap:.5rem;align-items:center;justify-content:flex-end;padding:.5rem;border-bottom:1px solid #eee;">
     <span id="staffStatus" style="font-weight:600;">Customer Mode (Locked)</span>
     <button id="btnStaffUnlock" class="btn">Unlock Staff</button>
@@ -54,7 +54,7 @@
 </div>
   </div>
 
-  <script src="js/app.js"></script>
+  <script src="js/app.js?v=2025-08-15c"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {

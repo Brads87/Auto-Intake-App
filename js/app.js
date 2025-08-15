@@ -23,6 +23,41 @@ function bufToB64(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf)))
 function b64ToBuf(b64){ return Uint8Array.from(atob(b64), c => c.charCodeAt(0)).buffer; }
 function randomBytes(n){ const u8 = new Uint8Array(n); crypto.getRandomValues(u8); return u8.buffer; }
 
+// ----- Encrypted Submissions (for manual "Save Intake") -----
+const SUB_ENC_STORAGE_KEY = "auto_intakesEnc";
+let _subsCache = [];
+
+function getSubStore(){ try { return JSON.parse(localStorage.getItem(SUB_ENC_STORAGE_KEY) || "null"); } catch { return null; } }
+function setSubStore(obj){ localStorage.setItem(SUB_ENC_STORAGE_KEY, JSON.stringify(obj)); }
+
+async function loadDecryptedSubmissions(){
+  if(!_cryptoKey) { _subsCache = []; return _subsCache; }
+  const s = getSubStore();
+  if(!s){ _subsCache = []; return _subsCache; }
+  const plain = await crypto.subtle.decrypt({ name:"AES-GCM", iv: b64ToBuf(s.iv) }, _cryptoKey, b64ToBuf(s.cipher));
+  _subsCache = JSON.parse(td.decode(plain) || "[]");
+  return _subsCache;
+}
+
+async function persistSubmissions(){
+  if(!_cryptoKey) throw new Error("Staff locked");
+  const iv = randomBytes(GCM_IV_BYTES);
+  const data = te.encode(JSON.stringify(_subsCache));
+  const cipher = await crypto.subtle.encrypt({ name:"AES-GCM", iv }, _cryptoKey, data);
+  setSubStore({ v: ENC_VERSION, iv: bufToB64(iv), cipher: bufToB64(cipher), updatedAt: Date.now() });
+}
+
+// Move any plaintext items into encrypted store when staff unlocks
+async function encryptSubmissionsIfNeeded(){
+  const pending = JSON.parse(localStorage.getItem("auto_intakes") || "[]");
+  if(!pending.length) return;
+  await loadDecryptedSubmissions();
+  _subsCache.unshift(...pending);
+  await persistSubmissions();
+  localStorage.removeItem("auto_intakes");
+}
+
+
 function getLockState(){ try { return JSON.parse(localStorage.getItem(LOCK_STATE_KEY) || "{}"); } catch { return {}; } }
 function setLockState(s){ localStorage.setItem(LOCK_STATE_KEY, JSON.stringify(s || {})); }
 
@@ -136,25 +171,32 @@ window.addEventListener("DOMContentLoaded", ()=>{
     if(typeof renderLanding === "function") renderLanding();
   });
 
-  document.getElementById("btnStaffSubmit")?.addEventListener("click", async ()=>{
-    if(checkLockedOut()) { modalError("Too many attempts. Try again later."); return; }
-    const pass = document.getElementById("staffPassInput")?.value || "";
-    if(!pass || pass.length < 6){ modalError("Use a passphrase of at least 6 characters."); return; }
-    try{
-      const { key, arr } = await ensureInitializedForPass(pass);
-      _cryptoKey = key;
-      _historyCache = arr;
-      STAFF_UNLOCKED = true;
-      if(window.state) window.state.isStaff = true; // keep compatibility with your UI
-      clearLockout();
-      showModal(false);
-      updateStaffUI();
-      if(typeof renderStaffView === "function") renderStaffView();
-    }catch(e){
-      recordBadAttempt();
-      modalError("Passphrase incorrect.");
-    }
-  });
+document.getElementById("btnStaffSubmit")?.addEventListener("click", async ()=>{
+  if(checkLockedOut()) { modalError("Too many attempts. Try again later."); return; }
+  const pass = document.getElementById("staffPassInput")?.value || "";
+  if(!pass || pass.length < 6){ modalError("Use a passphrase of at least 6 characters."); return; }
+
+  try{
+    const { key, arr } = await ensureInitializedForPass(pass);
+    _cryptoKey = key;
+    _historyCache = arr;
+    STAFF_UNLOCKED = true;
+    if(window.state) window.state.isStaff = true; // keep compatibility with your UI
+
+    // NEW — migrate plaintext submissions to encrypted store
+    await loadDecryptedSubmissions();    // NEW
+    await encryptSubmissionsIfNeeded();  // NEW
+
+    clearLockout();
+    showModal(false);
+    updateStaffUI();
+    if(typeof renderStaffView === "function") renderStaffView();
+  }catch(e){
+    recordBadAttempt();
+    modalError("Passphrase incorrect.");
+  }
+});
+
 
   updateStaffUI();
 });
@@ -847,15 +889,23 @@ function exportJSON(){
   URL.revokeObjectURL(a.href);
 }
 
-function saveSubmission(finalOutcomeId){
+async function saveSubmission(finalOutcomeId){
   const id = `${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
   const payload = buildSubmissionPayload(id, finalOutcomeId);
-  const all = loadAllSubmissions();
-  all.unshift(payload);
-  localStorage.setItem("auto_intakes", JSON.stringify(all));
-  alert("Saved to this device.");
 
-  // 👇 clear everything so the landing form is fresh
+  if (STAFF_UNLOCKED) {
+    // write directly into encrypted store
+    await loadDecryptedSubmissions();
+    _subsCache.unshift(payload);
+    await persistSubmissions();
+  } else {
+    // fallback: temporary plaintext, will auto-migrate on next staff unlock
+    const all = JSON.parse(localStorage.getItem("auto_intakes") || "[]");
+    all.unshift(payload);
+    localStorage.setItem("auto_intakes", JSON.stringify(all));
+  }
+
+  alert("Saved to this device.");
   resetForNewIntake();
   renderLanding();
   window.scrollTo(0, 0);
@@ -875,8 +925,8 @@ function buildSubmissionPayload(id, finalOutcomeId){
 }
 
 function loadAllSubmissions(){
-  try { return JSON.parse(localStorage.getItem("auto_intakes") || "[]"); }
-  catch { return []; }
+  // Submissions panel only shows when staff is unlocked; use encrypted cache
+  return STAFF_UNLOCKED ? (_subsCache || []) : [];
 }
 
 function renderSubmissionsList(){
@@ -903,8 +953,7 @@ function renderSubmissionsList(){
 }
 
 function previewSaved(id){
-  const all = loadAllSubmissions();
-  const item = all.find(x => x.id === id);
+  const item = (_subsCache || []).find(x => x.id === id);
   if(!item) return;
   const w = window.open("", "_blank");
   w.document.write(`<pre style="white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas">${escapeHtml(JSON.stringify(item, null, 2))}</pre>`);
@@ -913,8 +962,10 @@ function previewSaved(id){
 
 function deleteSaved(id){
   if(!confirm("Delete this saved intake?")) return;
-  const all = loadAllSubmissions().filter(x => x.id !== id);
-  localStorage.setItem("auto_intakes", JSON.stringify(all));
+  _subsCache = (_subsCache || []).filter(x => x.id !== id);
+  if (STAFF_UNLOCKED) {
+    persistSubmissions().catch(console.error);
+  }
   renderLanding();
 }
 
