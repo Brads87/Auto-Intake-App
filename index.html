@@ -11,14 +11,47 @@
 </head>
 <body>
   <div class="app" id="app">
-    <header>
-      <h1>Auto Service Intake</h1>
-      <div class="right">
-        <span class="time" id="clock"></span>
-        <button class="btn secondary" onclick="enterStaffMode()">Staff</button>
-      </div>
-    </header>
-    <div class="content" id="view"></div>
+<header>
+  <h1>Auto Service Intake</h1>
+  <div class="right">
+    <span class="time" id="clock"></span>
+  </div>
+
+  <!-- Staff Bar -->
+  <div id="staffBar" style="display:flex;gap:.5rem;align-items:center;justify-content:flex-end;padding:.5rem;border-bottom:1px solid #eee;">
+    <span id="staffStatus" style="font-weight:600;">Customer Mode (Locked)</span>
+    <button id="btnStaffUnlock" class="btn">Unlock Staff</button>
+    <button id="btnStaffLock" class="btn" style="display:none;">Lock</button>
+  </div>
+</header>
+<!-- Staff Unlock Modal -->
+<div id="staffLoginModal" style="position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;">
+  <div style="background:#fff; padding:1rem; width:min(420px,90vw); border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.25);">
+    <h3 style="margin-top:0">Staff Unlock</h3>
+    <p style="margin:.5rem 0">Enter your staff passphrase to unlock saved intakes.</p>
+    <input id="staffPassInput" type="password" placeholder="Staff passphrase" style="width:100%;padding:.6rem;border:1px solid #ddd;border-radius:8px;">
+    <div style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:.75rem;">
+      <button id="btnStaffCancel" class="btn btn-secondary">Cancel</button>
+      <button id="btnStaffSubmit" class="btn btn-primary">Unlock</button>
+    </div>
+    <div id="staffLoginError" style="color:#c00;margin-top:.5rem;display:none;"></div>
+  </div>
+</div>
+
+
+    <div class="content" id="view"><section id="staff-view">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>#</th><th>RO</th><th>Vehicle</th><th>Topic</th><th>When</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="staffTableBody">
+      <tr><td colspan="6" style="opacity:.7;">No records yet.</td></tr>
+    </tbody>
+  </table>
+</section>
+</div>
   </div>
 
   <script src="js/app.js"></script>

@@ -1,18 +1,178 @@
-// ==============================
-// Simple staff PIN (change it)
-// ==============================
-const STAFF_PIN = "5655";
+/***** Staff unlock + encrypted history (AES-GCM) *****
+ * Works on HTTPS or http://localhost (WebCrypto requirement)
+ * Stores encrypted data under localStorage key "intakeHistoryEnc"
+ ********************************************************/
+
+const ENC_STORAGE_KEY = "intakeHistoryEnc";   // { v, salt, iv, cipher, updatedAt }
+const LOCK_STATE_KEY  = "staffLockState";     // { tries, lockedUntil, backoff }
+const ENC_VERSION     = 1;
+const PBKDF2_ITER     = 250000;
+const GCM_IV_BYTES    = 12;
+const SALT_BYTES      = 16;
+
+let STAFF_UNLOCKED  = false;
+let _cryptoKey      = null;   // in-memory only
+let _historyCache   = [];     // decrypted for current session
+
+const te = new TextEncoder();
+const td = new TextDecoder();
+
+// --- small helpers ---
+function nowMs(){ return Date.now(); }
+function bufToB64(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))); }
+function b64ToBuf(b64){ return Uint8Array.from(atob(b64), c => c.charCodeAt(0)).buffer; }
+function randomBytes(n){ const u8 = new Uint8Array(n); crypto.getRandomValues(u8); return u8.buffer; }
+
+function getLockState(){ try { return JSON.parse(localStorage.getItem(LOCK_STATE_KEY) || "{}"); } catch { return {}; } }
+function setLockState(s){ localStorage.setItem(LOCK_STATE_KEY, JSON.stringify(s || {})); }
+
+async function deriveKeyFromPass(pass, saltBuf){
+  const base = await crypto.subtle.importKey("raw", te.encode(pass), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name:"PBKDF2", salt: saltBuf, iterations: PBKDF2_ITER, hash:"SHA-256" },
+    base,
+    { name:"AES-GCM", length:256 },
+    false,
+    ["encrypt","decrypt"]
+  );
+}
+function getEncStore(){ try { return JSON.parse(localStorage.getItem(ENC_STORAGE_KEY) || "null"); } catch { return null; } }
+function setEncStore(obj){ localStorage.setItem(ENC_STORAGE_KEY, JSON.stringify(obj)); }
+
+async function encryptHistory(arr, key, saltB64){
+  const iv = randomBytes(GCM_IV_BYTES);
+  const data = te.encode(JSON.stringify(arr));
+  const cipher = await crypto.subtle.encrypt({ name:"AES-GCM", iv }, key, data);
+  setEncStore({ v: ENC_VERSION, salt: saltB64, iv: bufToB64(iv), cipher: bufToB64(cipher), updatedAt: nowMs() });
+}
+async function decryptHistory(key){
+  const store = getEncStore();
+  if(!store) return [];
+  const plain = await crypto.subtle.decrypt({ name:"AES-GCM", iv: b64ToBuf(store.iv) }, key, b64ToBuf(store.cipher));
+  return JSON.parse(td.decode(plain) || "[]");
+}
+async function ensureInitializedForPass(pass){
+  let store = getEncStore();
+  if(store){
+    const key = await deriveKeyFromPass(pass, b64ToBuf(store.salt));
+    const arr = await decryptHistory(key); // throws if wrong pass
+    return { key, arr };
+  } else {
+    const salt = randomBytes(SALT_BYTES);
+    const saltB64 = bufToB64(salt);
+    const key = await deriveKeyFromPass(pass, salt);
+    await encryptHistory([], key, saltB64);
+    return { key, arr: [] };
+  }
+}
+
+// --- header + modal UI helpers ---
+function updateStaffUI(){
+  const status = document.getElementById("staffStatus");
+  const btnUnlock = document.getElementById("btnStaffUnlock");
+  const btnLock = document.getElementById("btnStaffLock");
+  if(!status || !btnUnlock || !btnLock) return;
+  if(STAFF_UNLOCKED){
+    status.textContent = "Staff Mode (Unlocked)";
+    btnUnlock.style.display = "none";
+    btnLock.style.display = "inline-block";
+  } else {
+    status.textContent = "Customer Mode (Locked)";
+    btnUnlock.style.display = "inline-block";
+    btnLock.style.display = "none";
+  }
+}
+function showModal(show){
+  const m = document.getElementById("staffLoginModal");
+  if(!m) return;
+  m.style.display = show ? "flex" : "none";
+  const err = document.getElementById("staffLoginError");
+  if(err) err.style.display = "none";
+  if(show){ setTimeout(()=> document.getElementById("staffPassInput")?.focus(), 30); }
+  else { const input = document.getElementById("staffPassInput"); if(input) input.value = ""; }
+}
+function modalError(msg){ const err = document.getElementById("staffLoginError"); if(err){ err.textContent = msg; err.style.display = "block"; } }
+
+function checkLockedOut(){ const s = getLockState(); return s.lockedUntil ? nowMs() < s.lockedUntil : false; }
+function recordBadAttempt(){
+  const s = getLockState();
+  const tries = (s.tries || 0) + 1;
+  if(tries >= 5){
+    const extra = (s.backoff || 0) + 5*60*1000; // +5 min each round
+    setLockState({ tries, backoff: extra, lockedUntil: nowMs()+extra });
+  } else setLockState({ ...s, tries });
+}
+function clearLockout(){ setLockState({}); }
+
+function requireStaffUnlockIfNeeded(){ if(!STAFF_UNLOCKED){ showModal(true); return false; } return true; }
+
+// secure I/O helpers for history
+async function loadDecryptedHistory(){
+  if(!_cryptoKey) throw new Error("Staff is locked. Unlock first.");
+  _historyCache = await decryptHistory(_cryptoKey);
+  return _historyCache;
+}
+async function persistHistory(){
+  if(!_cryptoKey) throw new Error("Staff is locked.");
+  const saltB64 = getEncStore()?.salt || bufToB64(randomBytes(SALT_BYTES));
+  await encryptHistory(_historyCache, _cryptoKey, saltB64);
+}
+
+// wire buttons AFTER DOM (don’t call renderLanding here)
+window.addEventListener("DOMContentLoaded", ()=>{
+  document.getElementById("btnStaffUnlock")?.addEventListener("click", ()=> showModal(true));
+  document.getElementById("btnStaffCancel")?.addEventListener("click", ()=> showModal(false));
+  document.getElementById("btnStaffLock")?.addEventListener("click", ()=>{
+    STAFF_UNLOCKED = false;
+    _cryptoKey = null;
+    _historyCache = [];
+    if(window.state) window.state.isStaff = false;
+    updateStaffUI();
+    // go back to landing if user was in staff view
+    if(typeof renderLanding === "function") renderLanding();
+  });
+
+  document.getElementById("btnStaffSubmit")?.addEventListener("click", async ()=>{
+    if(checkLockedOut()) { modalError("Too many attempts. Try again later."); return; }
+    const pass = document.getElementById("staffPassInput")?.value || "";
+    if(!pass || pass.length < 6){ modalError("Use a passphrase of at least 6 characters."); return; }
+    try{
+      const { key, arr } = await ensureInitializedForPass(pass);
+      _cryptoKey = key;
+      _historyCache = arr;
+      STAFF_UNLOCKED = true;
+      if(window.state) window.state.isStaff = true; // keep compatibility with your UI
+      clearLockout();
+      showModal(false);
+      updateStaffUI();
+      if(typeof renderStaffView === "function") renderStaffView();
+    }catch(e){
+      recordBadAttempt();
+      modalError("Passphrase incorrect.");
+    }
+  });
+
+  updateStaffUI();
+});
+
 
 // keep recent intakes on THIS device only (not synced)
 const MAX_LOCAL_HISTORY = 25;
-function saveLocalIntake(intake) {
+
+async function saveLocalIntake(intake){
   try {
-    const k = "intakeHistory";
-    const arr = JSON.parse(localStorage.getItem(k) || "[]");
-    arr.unshift(intake);
-    localStorage.setItem(k, JSON.stringify(arr.slice(0, MAX_LOCAL_HISTORY)));
-  } catch {}
+    if(!intake.when) intake.when = Date.now();
+    if(!requireStaffUnlockIfNeeded()) return; // force unlock before saving
+    await loadDecryptedHistory();
+    _historyCache.unshift(intake);
+    _historyCache = _historyCache.slice(0, MAX_LOCAL_HISTORY);
+    await persistHistory();
+  } catch(e) {
+    console.error("saveLocalIntake failed:", e);
+    alert("Unlock Staff to save intake.");
+  }
 }
+
 // ADD THIS DIRECTLY UNDER saveLocalIntake(...) — do not modify saveLocalIntake.
 function buildAutoSavedIntake(outcomeId){
   const tree = TREES[state.activeTreeKey] || {};
@@ -53,63 +213,69 @@ function buildAutoSavedIntake(outcomeId){
 }
 
 
-// ==============================
-// Staff mode helpers (NEW)
-// - Reads from intakeHistory (auto-saved on outcome)
-// ==============================
-function enterStaffMode(){
-  const pin = prompt("Staff PIN:");
-  if (pin === STAFF_PIN) {
-    state.isStaff = true;    // ✅ now marked as staff
-    renderStaffView();
-  } else {
-    alert("Incorrect PIN");
-  }
-}
-
+function enterStaffMode(){ showModal(true); }
 
 function exitStaffMode(){
-  state.isStaff = false;     // ✅ staff mode off
+  // same behavior as clicking Lock in header
+  STAFF_UNLOCKED = false;
+  _cryptoKey = null;
+  _historyCache = [];
+  if(window.state) window.state.isStaff = false;
+  updateStaffUI();
   renderLanding();
 }
 
 
 
-function renderStaffView(){
-  const k = "intakeHistory";
-  const data = JSON.parse(localStorage.getItem(k) || "[]");
 
-  // Newest first
-  data.sort((a, b) =>
-    new Date(b.visit?.startTime || b.when) - new Date(a.visit?.startTime || a.when)
-  );
-
-  const rows = data.map((x, i) => `
-    <tr>
-      <td>${i + 1}</td>
-      <td>${x.ro || "—"}</td>
-      <td>
-        ${(x.identity?.year || x.vehicle?.year || "—")}
-        ${(x.identity?.make || x.vehicle?.make || "")}
-        ${(x.identity?.model || x.vehicle?.model || "")}
-      </td>
-      <td>${(window.TREES?.[x.topic]?.title || x.topic || "—")}</td>
-      <td>${new Date(x.visit?.startTime || x.when).toLocaleString()}</td>
-      <td><button class="btn" onclick='viewIntake(${i})'>Open</button></td>
-    </tr>
-  `).join("");
-
-  const table = data.length
-    ? `<table class="table">
-         <thead>
-           <tr><th>#</th><th>RO</th><th>Vehicle</th><th>Topic</th><th>Time</th><th></th></tr>
-         </thead>
-         <tbody>${rows}</tbody>
-       </table>`
-    : "<div class='muted'>No intakes saved on this device yet.</div>";
-
+async function renderStaffView(){
   const container = document.getElementById("view");
-  if (container) {
+  if(!container) return;
+
+  if(!STAFF_UNLOCKED){
+    container.innerHTML = `
+      <div class="card">
+        <h2>Staff — Recent Intakes</h2>
+        <div class='muted'>Locked. Click “Unlock Staff” in the header.</div>
+        <div class="actions" style="margin-top:12px">
+          <button class="btn secondary" onclick="renderLanding()">Back</button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  try{
+    const data = await loadDecryptedHistory();
+
+    // Newest first
+    data.sort((a, b) =>
+      new Date(b.visit?.startTime || b.when) - new Date(a.visit?.startTime || a.when)
+    );
+
+    const rows = data.map((x, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${x.ro || "—"}</td>
+        <td>
+          ${(x.identity?.year || x.vehicle?.year || "—")}
+          ${(x.identity?.make || x.vehicle?.make || "")}
+          ${(x.identity?.model || x.vehicle?.model || "")}
+        </td>
+        <td>${(window.TREES?.[x.topic]?.title || x.topic || "—")}</td>
+        <td>${new Date(x.visit?.startTime || x.when).toLocaleString()}</td>
+        <td><button class="btn" onclick='viewIntake(${i})'>Open</button></td>
+      </tr>
+    `).join("");
+
+    const table = data.length
+      ? `<table class="table">
+           <thead>
+             <tr><th>#</th><th>RO</th><th>Vehicle</th><th>Topic</th><th>Time</th><th></th></tr>
+           </thead>
+           <tbody>${rows}</tbody>
+         </table>`
+      : "<div class='muted'>No intakes saved on this device yet.</div>";
+
     container.innerHTML = `
       <div class="card">
         <h2>Staff — Recent Intakes (this device)</h2>
@@ -118,17 +284,24 @@ function renderStaffView(){
           <button class="btn secondary" onclick="exitStaffMode()">Exit</button>
         </div>
       </div>`;
+  }catch(e){
+    container.innerHTML = `
+      <div class="card">
+        <h2>Staff — Recent Intakes</h2>
+        <div style="color:#c00;">Unlock failed or data unreadable.</div>
+        <div class="actions" style="margin-top:12px">
+          <button class="btn secondary" onclick="renderLanding()">Back</button>
+        </div>
+      </div>`;
   }
 }
 
 
+
 function viewIntake(idx){
-  const k = "intakeHistory";
-  const data = JSON.parse(localStorage.getItem(k) || "[]");
-  const x = data[idx]; 
+  const x = _historyCache?.[idx];
   if (!x) return;
 
-  // Build a readable Q&A trail; fall back to raw answers if the trail isn't present
   const answersSummary = Array.isArray(x.trail) && x.trail.length
     ? x.trail
         .filter(step => step.type !== "outcome")
@@ -142,7 +315,6 @@ function viewIntake(idx){
         ? escapeHtml(JSON.stringify(x.answers, null, 2)) 
         : "—");
 
-  // Prefer identity fields for vehicle, fall back to any old vehicle field
   const year  = x.identity?.year  || x.vehicle?.year  || "—";
   const make  = x.identity?.make  || x.vehicle?.make  || "";
   const model = x.identity?.model || x.vehicle?.model || "";
@@ -373,7 +545,8 @@ function renderLanding(){
       <h3 style="margin:6px 0 12px">Submissions</h3>
       <div id="subs">${renderSubmissionsList()}</div>
       <div class="muted" style="margin-top:6px">
-        Note: Staff auto-saved outcomes are under the Staff button (PIN).
+        Note: Staff auto-saved outcomes are under the “Unlock Staff” button.
+
       </div>
     </div>
   ` : "";
