@@ -894,12 +894,11 @@ async function saveSubmission(finalOutcomeId){
   const payload = buildSubmissionPayload(id, finalOutcomeId);
 
   if (STAFF_UNLOCKED) {
-    // write directly into encrypted store
     await loadDecryptedSubmissions();
     _subsCache.unshift(payload);
     await persistSubmissions();
   } else {
-    // fallback: temporary plaintext, will auto-migrate on next staff unlock
+    // temporary plaintext; will auto-migrate on next staff unlock
     const all = JSON.parse(localStorage.getItem("auto_intakes") || "[]");
     all.unshift(payload);
     localStorage.setItem("auto_intakes", JSON.stringify(all));
@@ -925,7 +924,7 @@ function buildSubmissionPayload(id, finalOutcomeId){
 }
 
 function loadAllSubmissions(){
-  // Submissions panel only shows when staff is unlocked; use encrypted cache
+  // Only show when staff is unlocked; items live in encrypted cache
   return STAFF_UNLOCKED ? (_subsCache || []) : [];
 }
 
@@ -952,6 +951,7 @@ function renderSubmissionsList(){
     </div>`;
 }
 
+
 function previewSaved(id){
   const item = (_subsCache || []).find(x => x.id === id);
   if(!item) return;
@@ -960,12 +960,11 @@ function previewSaved(id){
   w.document.close();
 }
 
+
 function deleteSaved(id){
   if(!confirm("Delete this saved intake?")) return;
   _subsCache = (_subsCache || []).filter(x => x.id !== id);
-  if (STAFF_UNLOCKED) {
-    persistSubmissions().catch(console.error);
-  }
+  if (STAFF_UNLOCKED) { persistSubmissions().catch(console.error); }
   renderLanding();
 }
 
