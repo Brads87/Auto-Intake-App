@@ -321,75 +321,86 @@ window.addEventListener("beforeunload", () => {
   _historyCache = [];
 });
 
+async function renderStaffView(){
+  const container = document.getElementById("view");
+  if(!container) return;
 
+  if(!STAFF_UNLOCKED){
+    container.innerHTML = `
+      <div class="card">
+        <h2>Staff — Recent Intakes</h2>
+        <div class='muted'>Locked. Click “Unlock Staff” in the header.</div>
+        <div class="actions" style="margin-top:12px">
+          <button class="btn secondary" onclick="renderLanding()">Back</button>
+        </div>
+      </div>`;
+    return;
+  }
 
+  try{
+    const data = await loadDecryptedHistory();
 
+    // Newest first
+    data.sort((a, b) =>
+      new Date(b.visit?.startTime || b.when) - new Date(a.visit?.startTime || a.when)
+    );
 
+    const rows = data.map((x, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${x.ro || "—"}</td>
+        <td>
+          ${(x.identity?.year || x.vehicle?.year || "—")}
+          ${(x.identity?.make || x.vehicle?.make || "")}
+          ${(x.identity?.model || x.vehicle?.model || "")}
+        </td>
+        <td>${(window.TREES?.[x.topic]?.title || x.topic || "—")}</td>
+        <td>${new Date(x.visit?.startTime || x.when).toLocaleString()}</td>
+        <td><button class="btn" onclick='viewIntake(${i})'>Open</button></td>
+      </tr>
+    `).join("");
 
-try{
-  const data = await loadDecryptedHistory();
+    const table = data.length
+      ? `<table class="table">
+           <thead>
+             <tr><th>#</th><th>RO</th><th>Vehicle</th><th>Topic</th><th>Time</th><th></th></tr>
+           </thead>
+           <tbody>${rows}</tbody>
+         </table>`
+      : "<div class='muted'>No intakes saved on this device yet.</div>";
 
-  // Newest first
-  data.sort((a, b) =>
-    new Date(b.visit?.startTime || b.when) - new Date(a.visit?.startTime || a.when)
-  );
-
-  const rows = data.map((x, i) => `
-    <tr>
-      <td>${i + 1}</td>
-      <td>${x.ro || "—"}</td>
-      <td>
-        ${(x.identity?.year || x.vehicle?.year || "—")}
-        ${(x.identity?.make || x.vehicle?.make || "")}
-        ${(x.identity?.model || x.vehicle?.model || "")}
-      </td>
-      <td>${(window.TREES?.[x.topic]?.title || x.topic || "—")}</td>
-      <td>${new Date(x.visit?.startTime || x.when).toLocaleString()}</td>
-      <td><button class="btn" onclick='viewIntake(${i})'>Open</button></td>
-    </tr>
-  `).join("");
-
-  const table = data.length
-    ? `<table class="table">
-         <thead>
-           <tr><th>#</th><th>RO</th><th>Vehicle</th><th>Topic</th><th>Time</th><th></th></tr>
-         </thead>
-         <tbody>${rows}</tbody>
-       </table>`
-    : "<div class='muted'>No intakes saved on this device yet.</div>";
-
-  const submissionsHtml = `
-    <div class="divider"></div>
-    <div class="card">
-      <div class="muted">Saved Intakes (manual saves, this device)</div>
-      <h3 style="margin:6px 0 12px">Submissions</h3>
-      <div id="subs">${renderSubmissionsList()}</div>
-      <div class="muted" style="margin-top:6px">
-        Note: Auto-saved outcomes appear in the table above when staff is unlocked.
+    const submissionsHtml = `
+      <div class="divider"></div>
+      <div class="card">
+        <div class="muted">Saved Intakes (manual saves, this device)</div>
+        <h3 style="margin:6px 0 12px">Submissions</h3>
+        <div id="subs">${renderSubmissionsList()}</div>
+        <div class="muted" style="margin-top:6px">
+          Note: Auto-saved outcomes appear in the table above when staff is unlocked.
+        </div>
       </div>
-    </div>
-  `;
+    `;
 
-  container.innerHTML = `
-    <div class="card">
-      <h2>Staff — Recent Intakes (this device)</h2>
-      ${table}
-    </div>
-    ${submissionsHtml}
-    <div class="actions" style="margin-top:12px">
-      <button class="btn secondary" onclick="exitStaffMode()">Exit</button>
-    </div>`;
-}catch(e){
-  container.innerHTML = `
-    <div class="card">
-      <h2>Staff — Recent Intakes</h2>
-      <div style="color:#c00;">Unlock failed or data unreadable.</div>
+    container.innerHTML = `
+      <div class="card">
+        <h2>Staff — Recent Intakes (this device)</h2>
+        ${table}
+      </div>
+      ${submissionsHtml}
       <div class="actions" style="margin-top:12px">
-        <button class="btn secondary" onclick="renderLanding()">Back</button>
-      </div>
-    </div>`;
+        <button class="btn secondary" onclick="exitStaffMode()">Exit</button>
+      </div>`;
+  }catch(e){
+    container.innerHTML = `
+      <div class="card">
+        <h2>Staff — Recent Intakes</h2>
+        <div style="color:#c00;">Unlock failed or data unreadable.</div>
+        <div class="actions" style="margin-top:12px">
+          <button class="btn secondary" onclick="renderLanding()">Back</button>
+        </div>
+      </div>`;
+  }
 }
-
 
 
 function viewIntake(idx){
@@ -631,6 +642,15 @@ function progressPct() {
 
 // ---------- Landing ----------
 function renderLanding(){
+  // 🔒 Auto-lock if we came here while unlocked
+  if (STAFF_UNLOCKED) {
+    STAFF_UNLOCKED = false;
+    _cryptoKey = null;
+    _historyCache = [];
+    state.isStaff = false;
+    updateStaffUI();
+  }
+  
   // Only render submissions if staff
   const submissionsSection = state.isStaff ? `
     <div class="divider"></div>
