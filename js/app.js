@@ -17,27 +17,57 @@ let _historyCache   = [];     // decrypted for current session
 const te = new TextEncoder();
 const td = new TextDecoder();
 
+// ===== Encrypted pending store for locked mode =====
+// When staff is locked, we encrypt intakes with this fallback secret,
+// into a separate encrypted blob. On staff unlock, we decrypt + merge
+// into the main history store and delete the pending blob.
+const FALLBACK_SECRET = "Euo2V4cT3Cq0o3h1yVso-7bZq8Z_1fQx2jXrBrAd$sYt6uKq5dLe9Ns4Hg1Jv0D"; // <= choose a new random string per deploy
+const PENDING_ENC_STORAGE_KEY = "intakePendingEnc";       // { v, salt, iv, cipher, updatedAt }
+
+// Pending-store helpers (structured just like the main enc store)
+function getPendingEncStore(){ try { return JSON.parse(localStorage.getItem(PENDING_ENC_STORAGE_KEY) || "null"); } catch { return null; } }
+function setPendingEncStore(obj){ localStorage.setItem(PENDING_ENC_STORAGE_KEY, JSON.stringify(obj)); }
+
+async function encryptPending(arr, key, saltB64){
+  const iv = randomBytes(GCM_IV_BYTES);
+  const data = te.encode(JSON.stringify(arr));
+  const cipher = await crypto.subtle.encrypt({ name:"AES-GCM", iv }, key, data);
+  setPendingEncStore({ v: ENC_VERSION, salt: saltB64, iv: bufToB64(iv), cipher: bufToB64(cipher), updatedAt: nowMs() });
+}
+async function decryptPending(key){
+  const store = getPendingEncStore();
+  if(!store) return [];
+  const plain = await crypto.subtle.decrypt({ name:"AES-GCM", iv: b64ToBuf(store.iv) }, key, b64ToBuf(store.cipher));
+  return JSON.parse(td.decode(plain) || "[]");
+}
+
 // --- small helpers ---
 function nowMs(){ return Date.now(); }
 function bufToB64(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))); }
 function b64ToBuf(b64){ return Uint8Array.from(atob(b64), c => c.charCodeAt(0)).buffer; }
 function randomBytes(n){ const u8 = new Uint8Array(n); crypto.getRandomValues(u8); return u8.buffer; }
 
-// ----- Encrypted Submissions (for manual "Save Intake") -----
-const SUB_ENC_STORAGE_KEY = "auto_intakesEnc";
-let _subsCache = [];
 
-function getSubStore(){ try { return JSON.parse(localStorage.getItem(SUB_ENC_STORAGE_KEY) || "null"); } catch { return null; } }
-function setSubStore(obj){ localStorage.setItem(SUB_ENC_STORAGE_KEY, JSON.stringify(obj)); }
-
-async function loadDecryptedSubmissions(){
-  if(!_cryptoKey) { _subsCache = []; return _subsCache; }
-  const s = getSubStore();
-  if(!s){ _subsCache = []; return _subsCache; }
-  const plain = await crypto.subtle.decrypt({ name:"AES-GCM", iv: b64ToBuf(s.iv) }, _cryptoKey, b64ToBuf(s.cipher));
-  _subsCache = JSON.parse(td.decode(plain) || "[]");
-  return _subsCache;
+async function migratePendingToHistory(){
+  const p = getPendingEncStore();
+  if(!p || !_cryptoKey) return;
+  try {
+    const fbKey = await deriveKeyFromPass(FALLBACK_SECRET, b64ToBuf(p.salt));
+    const pendingArr = await decryptPending(fbKey);
+    if (Array.isArray(pendingArr) && pendingArr.length) {
+      await loadDecryptedHistory(); // ensure latest main cache
+      _historyCache.unshift(...pendingArr);
+      _historyCache = _historyCache.slice(0, MAX_LOCAL_HISTORY);
+      await persistHistory(); // re-encrypt under staff key
+    }
+  } catch (e) {
+    console.warn("Pending decrypt failed with fallback key; skipping migration.", e);
+  }
+  localStorage.removeItem(PENDING_ENC_STORAGE_KEY);
 }
+
+
+
 
 async function persistSubmissions(){
   if(!_cryptoKey) throw new Error("Staff locked");
@@ -181,11 +211,9 @@ document.getElementById("btnStaffSubmit")?.addEventListener("click", async ()=>{
     _cryptoKey = key;
     _historyCache = arr;
     STAFF_UNLOCKED = true;
+    await migratePendingToHistory();
     if(window.state) window.state.isStaff = true; // keep compatibility with your UI
 
-    // NEW — migrate plaintext submissions to encrypted store
-    await loadDecryptedSubmissions();    // NEW
-    await encryptSubmissionsIfNeeded();  // NEW
 
     clearLockout();
     showModal(false);
@@ -209,18 +237,29 @@ async function saveLocalIntake(intake){
   try {
     if(!intake.when) intake.when = Date.now();
 
-    if (!STAFF_UNLOCKED) {
-      // buffer auto-saves in plaintext; migrate to encrypted on next unlock
-      const pending = JSON.parse(localStorage.getItem("auto_intakes") || "[]");
-      pending.unshift(intake);
-      localStorage.setItem("auto_intakes", JSON.stringify(pending));
-      return;
+    if (_cryptoKey) {
+      // Staff unlocked → write to main encrypted history
+      await loadDecryptedHistory();
+      _historyCache.unshift(intake);
+      _historyCache = _historyCache.slice(0, MAX_LOCAL_HISTORY);
+      await persistHistory(); // uses the current main store salt
+    } else {
+      // Staff locked → write to encrypted pending blob using fallback secret
+      let p = getPendingEncStore();
+      let saltB64, key, arr = [];
+      if (p) {
+        saltB64 = p.salt;
+        key = await deriveKeyFromPass(FALLBACK_SECRET, b64ToBuf(saltB64));
+        try { arr = await decryptPending(key); } catch { arr = []; }
+      } else {
+        const salt = randomBytes(SALT_BYTES);
+        saltB64 = bufToB64(salt);
+        key = await deriveKeyFromPass(FALLBACK_SECRET, salt);
+      }
+      arr.unshift(intake);
+      arr = arr.slice(0, MAX_LOCAL_HISTORY);
+      await encryptPending(arr, key, saltB64);
     }
-
-    await loadDecryptedHistory();
-    _historyCache.unshift(intake);
-    _historyCache = _historyCache.slice(0, MAX_LOCAL_HISTORY);
-    await persistHistory();
   } catch(e) {
     console.error("saveLocalIntake failed:", e);
   }
@@ -269,7 +308,6 @@ function buildAutoSavedIntake(outcomeId){
 function enterStaffMode(){ showModal(true); }
 
 function exitStaffMode(){
-  // same behavior as clicking Lock in header
   STAFF_UNLOCKED = false;
   _cryptoKey = null;
   _historyCache = [];
@@ -277,82 +315,81 @@ function exitStaffMode(){
   updateStaffUI();
   renderLanding();
 }
+window.addEventListener("beforeunload", () => {
+  STAFF_UNLOCKED = false;
+  _cryptoKey = null;
+  _historyCache = [];
+});
 
 
 
 
-async function renderStaffView(){
-  const container = document.getElementById("view");
-  if(!container) return;
 
-  if(!STAFF_UNLOCKED){
-    container.innerHTML = `
-      <div class="card">
-        <h2>Staff — Recent Intakes</h2>
-        <div class='muted'>Locked. Click “Unlock Staff” in the header.</div>
-        <div class="actions" style="margin-top:12px">
-          <button class="btn secondary" onclick="renderLanding()">Back</button>
-        </div>
-      </div>`;
-    return;
-  }
 
-  try{
-    const data = await loadDecryptedHistory();
-    await loadDecryptedSubmissions();
+try{
+  const data = await loadDecryptedHistory();
 
-    // Newest first
-    data.sort((a, b) =>
-      new Date(b.visit?.startTime || b.when) - new Date(a.visit?.startTime || a.when)
-    );
+  // Newest first
+  data.sort((a, b) =>
+    new Date(b.visit?.startTime || b.when) - new Date(a.visit?.startTime || a.when)
+  );
 
-    const rows = data.map((x, i) => `
-      <tr>
-        <td>${i + 1}</td>
-        <td>${x.ro || "—"}</td>
-        <td>
-          ${(x.identity?.year || x.vehicle?.year || "—")}
-          ${(x.identity?.make || x.vehicle?.make || "")}
-          ${(x.identity?.model || x.vehicle?.model || "")}
-        </td>
-        <td>${(window.TREES?.[x.topic]?.title || x.topic || "—")}</td>
-        <td>${new Date(x.visit?.startTime || x.when).toLocaleString()}</td>
-        <td><button class="btn" onclick='viewIntake(${i})'>Open</button></td>
-      </tr>
-    `).join("");
+  const rows = data.map((x, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${x.ro || "—"}</td>
+      <td>
+        ${(x.identity?.year || x.vehicle?.year || "—")}
+        ${(x.identity?.make || x.vehicle?.make || "")}
+        ${(x.identity?.model || x.vehicle?.model || "")}
+      </td>
+      <td>${(window.TREES?.[x.topic]?.title || x.topic || "—")}</td>
+      <td>${new Date(x.visit?.startTime || x.when).toLocaleString()}</td>
+      <td><button class="btn" onclick='viewIntake(${i})'>Open</button></td>
+    </tr>
+  `).join("");
 
-    const submissionsHtml = `
-      <div class="divider"></div>
-      <div class="card">
-        <div class="muted">Saved Intakes (manual saves, this device)</div>
-        <h3 style="margin:6px 0 12px">Submissions</h3>
-        <div id="subs">${renderSubmissionsList()}</div>
-        <div class="muted" style="margin-top:6px">
-          Note: Auto-saved outcomes appear in the table above when staff is unlocked.
-        </div>
+  const table = data.length
+    ? `<table class="table">
+         <thead>
+           <tr><th>#</th><th>RO</th><th>Vehicle</th><th>Topic</th><th>Time</th><th></th></tr>
+         </thead>
+         <tbody>${rows}</tbody>
+       </table>`
+    : "<div class='muted'>No intakes saved on this device yet.</div>";
+
+  const submissionsHtml = `
+    <div class="divider"></div>
+    <div class="card">
+      <div class="muted">Saved Intakes (manual saves, this device)</div>
+      <h3 style="margin:6px 0 12px">Submissions</h3>
+      <div id="subs">${renderSubmissionsList()}</div>
+      <div class="muted" style="margin-top:6px">
+        Note: Auto-saved outcomes appear in the table above when staff is unlocked.
       </div>
-    `;
+    </div>
+  `;
 
-    container.innerHTML = `
-      <div class="card">
-        <h2>Staff — Recent Intakes (this device)</h2>
-        ${table}
-      </div>
-      ${submissionsHtml}
+  container.innerHTML = `
+    <div class="card">
+      <h2>Staff — Recent Intakes (this device)</h2>
+      ${table}
+    </div>
+    ${submissionsHtml}
+    <div class="actions" style="margin-top:12px">
+      <button class="btn secondary" onclick="exitStaffMode()">Exit</button>
+    </div>`;
+}catch(e){
+  container.innerHTML = `
+    <div class="card">
+      <h2>Staff — Recent Intakes</h2>
+      <div style="color:#c00;">Unlock failed or data unreadable.</div>
       <div class="actions" style="margin-top:12px">
-        <button class="btn secondary" onclick="exitStaffMode()">Exit</button>
-      </div>`;
-  }catch(e){
-    container.innerHTML = `
-      <div class="card">
-        <h2>Staff — Recent Intakes</h2>
-        <div style="color:#c00;">Unlock failed or data unreadable.</div>
-        <div class="actions" style="margin-top:12px">
-          <button class="btn secondary" onclick="renderLanding()">Back</button>
-        </div>
-      </div>`;
-  }
+        <button class="btn secondary" onclick="renderLanding()">Back</button>
+      </div>
+    </div>`;
 }
+
 
 
 function viewIntake(idx){
@@ -904,22 +941,41 @@ async function saveSubmission(finalOutcomeId){
   const id = `${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
   const payload = buildSubmissionPayload(id, finalOutcomeId);
 
-  if (STAFF_UNLOCKED) {
-    await loadDecryptedSubmissions();
-    _subsCache.unshift(payload);
-    await persistSubmissions();
-  } else {
-    // temporary plaintext; will auto-migrate on next staff unlock
-    const all = JSON.parse(localStorage.getItem("auto_intakes") || "[]");
-    all.unshift(payload);
-    localStorage.setItem("auto_intakes", JSON.stringify(all));
-  }
+  try {
+    if (_cryptoKey) {
+      // Staff unlocked → write to main encrypted history
+      await loadDecryptedHistory();
+      _historyCache.unshift(payload);
+      _historyCache = _historyCache.slice(0, MAX_LOCAL_HISTORY);
+      await persistHistory();
+    } else {
+      // Staff locked → write to encrypted pending blob using fallback secret
+      let p = getPendingEncStore();
+      let saltB64, key, arr = [];
+      if (p) {
+        saltB64 = p.salt;
+        key = await deriveKeyFromPass(FALLBACK_SECRET, b64ToBuf(saltB64));
+        try { arr = await decryptPending(key); } catch { arr = []; }
+      } else {
+        const salt = randomBytes(SALT_BYTES);
+        saltB64 = bufToB64(salt);
+        key = await deriveKeyFromPass(FALLBACK_SECRET, salt);
+      }
+      arr.unshift(payload);
+      arr = arr.slice(0, MAX_LOCAL_HISTORY);
+      await encryptPending(arr, key, saltB64);
+    }
 
-  alert("Saved to this device.");
-  resetForNewIntake();
-  renderLanding();
-  window.scrollTo(0, 0);
+    alert("Saved to this device.");
+    resetForNewIntake();
+    renderLanding();
+    window.scrollTo(0, 0);
+  } catch (e) {
+    console.error("saveSubmission failed:", e);
+    alert("Save failed.");
+  }
 }
+
 
 function buildSubmissionPayload(id, finalOutcomeId){
   const tree = TREES[state.activeTreeKey] || {};
@@ -935,8 +991,8 @@ function buildSubmissionPayload(id, finalOutcomeId){
 }
 
 function loadAllSubmissions(){
-  // Only show when staff is unlocked; items live in encrypted cache
-  return STAFF_UNLOCKED ? (_subsCache || []) : [];
+  // Only show when staff is unlocked; items live in _historyCache
+  return STAFF_UNLOCKED ? (_historyCache || []) : [];
 }
 
 function renderSubmissionsList(){
@@ -948,9 +1004,9 @@ function renderSubmissionsList(){
         <div class="card">
           <div class="flex" style="justify-content:space-between">
             <div>
-              <div class="muted">${new Date(s.visit.startTime).toLocaleString()}</div>
-              <div style="margin-top:6px"><strong>${s.identity.name || "Customer"}</strong> — ${s.identity.year||""} ${s.identity.make||""} ${s.identity.model||""}</div>
-              <div class="muted" style="margin-top:4px">${s.outcomeTitle}</div>
+              <div class="muted">${new Date(s.visit?.startTime || s.when).toLocaleString()}</div>
+              <div style="margin-top:6px"><strong>${s.identity?.name || "Customer"}</strong> — ${s.identity?.year||""} ${s.identity?.make||""} ${s.identity?.model||""}</div>
+              <div class="muted" style="margin-top:4px">${s.outcomeTitle || "—"}</div>
             </div>
             <div class="flex">
               <button class="btn" onclick='previewSaved(${JSON.stringify(s.id)})'>View</button>
@@ -962,23 +1018,20 @@ function renderSubmissionsList(){
     </div>`;
 }
 
-
 function previewSaved(id){
-  const item = (_subsCache || []).find(x => x.id === id);
+  const item = (_historyCache || []).find(x => x.id === id);
   if(!item) return;
   const w = window.open("", "_blank");
   w.document.write(`<pre style="white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas">${escapeHtml(JSON.stringify(item, null, 2))}</pre>`);
   w.document.close();
 }
 
-
 function deleteSaved(id){
   if(!confirm("Delete this saved intake?")) return;
-  _subsCache = (_subsCache || []).filter(x => x.id !== id);
-  if (STAFF_UNLOCKED) { persistSubmissions().catch(console.error); }
-  // Refresh the view you're likely on
-  if (STAFF_UNLOCKED) renderStaffView();
-  else renderLanding();
+  _historyCache = (_historyCache || []).filter(x => x.id !== id);
+  if (STAFF_UNLOCKED) { persistHistory().catch(console.error); }
+  // refresh whichever screen you're on
+  if (STAFF_UNLOCKED) renderStaffView(); else renderLanding();
 }
 
 
