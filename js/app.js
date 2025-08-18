@@ -208,14 +208,21 @@ const MAX_LOCAL_HISTORY = 25;
 async function saveLocalIntake(intake){
   try {
     if(!intake.when) intake.when = Date.now();
-    if(!requireStaffUnlockIfNeeded()) return; // force unlock before saving
+
+    if (!STAFF_UNLOCKED) {
+      // buffer auto-saves in plaintext; migrate to encrypted on next unlock
+      const pending = JSON.parse(localStorage.getItem("auto_intakes") || "[]");
+      pending.unshift(intake);
+      localStorage.setItem("auto_intakes", JSON.stringify(pending));
+      return;
+    }
+
     await loadDecryptedHistory();
     _historyCache.unshift(intake);
     _historyCache = _historyCache.slice(0, MAX_LOCAL_HISTORY);
     await persistHistory();
   } catch(e) {
     console.error("saveLocalIntake failed:", e);
-    alert("Unlock Staff to save intake.");
   }
 }
 
@@ -292,6 +299,7 @@ async function renderStaffView(){
 
   try{
     const data = await loadDecryptedHistory();
+    await loadDecryptedSubmissions();
 
     // Newest first
     data.sort((a, b) =>
@@ -313,22 +321,26 @@ async function renderStaffView(){
       </tr>
     `).join("");
 
-    const table = data.length
-      ? `<table class="table">
-           <thead>
-             <tr><th>#</th><th>RO</th><th>Vehicle</th><th>Topic</th><th>Time</th><th></th></tr>
-           </thead>
-           <tbody>${rows}</tbody>
-         </table>`
-      : "<div class='muted'>No intakes saved on this device yet.</div>";
+    const submissionsHtml = `
+      <div class="divider"></div>
+      <div class="card">
+        <div class="muted">Saved Intakes (manual saves, this device)</div>
+        <h3 style="margin:6px 0 12px">Submissions</h3>
+        <div id="subs">${renderSubmissionsList()}</div>
+        <div class="muted" style="margin-top:6px">
+          Note: Auto-saved outcomes appear in the table above when staff is unlocked.
+        </div>
+      </div>
+    `;
 
     container.innerHTML = `
       <div class="card">
         <h2>Staff — Recent Intakes (this device)</h2>
         ${table}
-        <div class="actions" style="margin-top:12px">
-          <button class="btn secondary" onclick="exitStaffMode()">Exit</button>
-        </div>
+      </div>
+      ${submissionsHtml}
+      <div class="actions" style="margin-top:12px">
+        <button class="btn secondary" onclick="exitStaffMode()">Exit</button>
       </div>`;
   }catch(e){
     container.innerHTML = `
@@ -341,7 +353,6 @@ async function renderStaffView(){
       </div>`;
   }
 }
-
 
 
 function viewIntake(idx){
@@ -965,8 +976,11 @@ function deleteSaved(id){
   if(!confirm("Delete this saved intake?")) return;
   _subsCache = (_subsCache || []).filter(x => x.id !== id);
   if (STAFF_UNLOCKED) { persistSubmissions().catch(console.error); }
-  renderLanding();
+  // Refresh the view you're likely on
+  if (STAFF_UNLOCKED) renderStaffView();
+  else renderLanding();
 }
+
 
 // ---------- Clock + boot ----------
 function tickClock(){ const el = $("#clock"); if (el) el.textContent = new Date().toLocaleString(); }

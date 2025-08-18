@@ -5,7 +5,7 @@
 // - Everything else: cache-first (fast + offline)
 // - Bump CACHE_NAME on each deploy
 // -----------------------------
-const CACHE_NAME = "intake-v1.8.0"; // bump each deploy
+const CACHE_NAME = "intake-v1.8.1"; // bump each deploy
 
 self.addEventListener("install", (event) => {
   // Activate new SW immediately
