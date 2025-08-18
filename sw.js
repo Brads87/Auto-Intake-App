@@ -5,7 +5,7 @@
 // - Everything else: cache-first (fast + offline)
 // - Bump CACHE_NAME on each deploy
 // -----------------------------
-const CACHE = "intake-v16"; // bump this when ASSETS change
+const CACHE_NAME = "intake-v1.8.0"; // bump each deploy
 
 self.addEventListener("install", (event) => {
   // Activate new SW immediately
@@ -26,29 +26,46 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// Helper: is this an app-code request?
+// -----------------------------
+// NEW fetch handler (replaces your old one)
+// -----------------------------
+
+// Helper: treat .js/.css/.map as app code
 function isAppCode(url) {
   return url.pathname.endsWith(".js") || url.pathname.endsWith(".css") || url.pathname.endsWith(".map");
 }
+
+// Base path of this project on GitHub Pages, e.g. "/Auto-Intake-App/" (or "/" on user sites)
+const BASE_PATH = new URL(self.registration.scope).pathname;
+// Always use the scoped index.html as the offline fallback
+const INDEX_REQ = new Request(BASE_PATH.replace(/\/?$/, "/") + "index.html", { cache: "reload" });
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  // Only handle same-origin requests
+  // Only handle same-origin
   if (url.origin !== location.origin) return;
 
-  // 1) Navigation requests (HTML) → network-first with cache fallback
+  // 1) Navigations (HTML) → network-first, fallback to cached scoped index.html
   if (req.mode === "navigate" || (req.headers.get("accept") || "").includes("text/html")) {
-    event.respondWith(
-      fetch(req)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE_NAME).then((c) => c.put(req, copy));
-          return res;
-        })
-        .catch(() => caches.match(req))
-    );
+    event.respondWith((async () => {
+      try {
+        const res = await fetch(req);
+        // cache the scoped index for future loads
+        const cache = await caches.open(CACHE_NAME);
+        cache.put(INDEX_REQ, res.clone());
+        return res;
+      } catch {
+        // exact scoped index.html first
+        const cachedIndex = await caches.match(INDEX_REQ);
+        if (cachedIndex) return cachedIndex;
+        // last-ditch: whatever we have for this request
+        const cachedReq = await caches.match(req);
+        if (cachedReq) return cachedReq;
+        return new Response("<h1>Offline</h1>", { status: 200, headers: { "Content-Type": "text/html" } });
+      }
+    })());
     return;
   }
 
@@ -56,9 +73,9 @@ self.addEventListener("fetch", (event) => {
   if (isAppCode(url)) {
     event.respondWith(
       fetch(req)
-        .then((res) => {
+        .then(async (res) => {
           const copy = res.clone();
-          caches.open(CACHE_NAME).then((c) => c.put(req, copy));
+          (await caches.open(CACHE_NAME)).put(req, copy);
           return res;
         })
         .catch(() => caches.match(req))
@@ -66,13 +83,13 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 3) Everything else (images, icons, fonts, etc.) → cache-first, then network
+  // 3) Everything else → cache-first
   event.respondWith(
     caches.match(req).then((cached) => {
       if (cached) return cached;
-      return fetch(req).then((res) => {
+      return fetch(req).then(async (res) => {
         const copy = res.clone();
-        caches.open(CACHE_NAME).then((c) => c.put(req, copy));
+        (await caches.open(CACHE_NAME)).put(req, copy);
         return res;
       });
     })
