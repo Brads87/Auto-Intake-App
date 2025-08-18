@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#0f172a">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <title>Auto Service Intake</title>
-  <link rel="stylesheet" href="styles/style.css?v=1.8.3" />
+  <link rel="stylesheet" href="styles/style.css?v=1.8.4" />
 </head>
 <body>
   <div class="app" id="app">
@@ -39,22 +39,23 @@
 </div>
 
 
-    <div class="content" id="view"><section id="staff-view">
-  <table class="table">
-    <thead>
-      <tr>
-        <th>#</th><th>RO</th><th>Vehicle</th><th>Topic</th><th>When</th><th></th>
-      </tr>
-    </thead>
-    <tbody id="staffTableBody">
-      <tr><td colspan="6" style="opacity:.7;">No records yet.</td></tr>
-    </tbody>
-  </table>
-</section>
-</div>
-  </div>
+  - <div class="content" id="view"><section id="staff-view">
+-   <table class="table">
+-     <thead>
+-       <tr>
+-         <th>#</th><th>RO</th><th>Vehicle</th><th>Topic</th><th>When</th><th></th>
+-       </tr>
+-     </thead>
+-     <tbody id="staffTableBody">
+-       <tr><td colspan="6" style="opacity:.7;">No records yet.</td></tr>
+-     </tbody>
+-   </table>
+- </section>
+- </div>
++ <div class="content" id="view"></div>
 
-  <script src="js/app.js?v=1.8.3"></script>
+
+  <script src="js/app.js?v=1.8.4"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
