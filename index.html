@@ -5,26 +5,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <!-- PWA bits -->
-  <link rel="manifest" href="manifest.webmanifest?v=1.9.1">
+  <link rel="manifest" href="manifest.webmanifest?v=1.9.2">
   <meta name="theme-color" content="#0f172a">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
 
   <title>Auto Service Intake</title>
 
   <!-- CSS -->
-  <link rel="stylesheet" href="styles/style.css?v=1.9.1" />
+  <link rel="stylesheet" href="styles/style.css?v=1.9.2" />
 
   <!-- CSP: allow self + a single hashed inline block for SW registration -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self';
-                 script-src 'self' 'sha256-p43ID8/YlvzS8IKLeKnSkaYaY/HbO1yWL6OXLZNOCHE=';
-                 style-src 'self' 'unsafe-inline';
-                 img-src 'self' data:;
-                 object-src 'none';
-                 base-uri 'self';
-                 form-action 'self';
-                 frame-ancestors 'self';
-                 upgrade-insecure-requests">
+      content="default-src 'self';
+               script-src 'self' 'unsafe-inline';
+               style-src 'self' 'unsafe-inline';
+               img-src 'self' data:;
+               object-src 'none';
+               base-uri 'self';
+               form-action 'self';
+               frame-ancestors 'self';
+               upgrade-insecure-requests">
   <meta name="referrer" content="same-origin">
 </head>
 
@@ -86,7 +86,7 @@ if ('serviceWorker' in navigator) {
   </script>
 
   <!-- JS (external; defer keeps CSP happy and preserves order) -->
-  <script src="js/boot.js?v=1.9.1" defer></script>
-  <script src="js/app.js?v=1.9.1" defer></script>
+  <script src="js/boot.js?v=1.9.2" defer></script>
+  <script src="js/app.js?v=1.9.2" defer></script>
 </body>
 </html>
