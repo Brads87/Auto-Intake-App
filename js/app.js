@@ -13,6 +13,7 @@ const SALT_BYTES      = 16;
 let STAFF_UNLOCKED  = false;
 let _cryptoKey      = null;   // in-memory only
 let _historyCache   = [];     // decrypted for current session
+let _recoveryKey    = null;   // memory-only; set after recovery or when you set a code
 
 const te = new TextEncoder();
 const td = new TextDecoder();
@@ -26,6 +27,26 @@ const PENDING_ENC_STORAGE_KEY = "intakePendingEnc";       // { v, salt, iv, ciph
 // Pending-store helpers (structured just like the main enc store)
 function getPendingEncStore(){ try { return JSON.parse(localStorage.getItem(PENDING_ENC_STORAGE_KEY) || "null"); } catch { return null; } }
 function setPendingEncStore(obj){ localStorage.setItem(PENDING_ENC_STORAGE_KEY, JSON.stringify(obj)); }
+
+// ===== Recovery store (second encrypted copy under a Recovery Code) =====
+const RECOVERY_STORAGE_KEY = "intakeHistoryEncRecovery"; // { v, salt, iv, cipher, updatedAt }
+
+function getRecStore(){ try { return JSON.parse(localStorage.getItem(RECOVERY_STORAGE_KEY) || "null"); } catch { return null; } }
+function setRecStore(obj){ localStorage.setItem(RECOVERY_STORAGE_KEY, JSON.stringify(obj)); }
+
+async function encryptRecovery(arr, key, saltB64){
+  const iv = randomBytes(GCM_IV_BYTES);
+  const data = te.encode(JSON.stringify(arr));
+  const cipher = await crypto.subtle.encrypt({ name:"AES-GCM", iv }, key, data);
+  setRecStore({ v: ENC_VERSION, salt: saltB64, iv: bufToB64(iv), cipher: bufToB64(cipher), updatedAt: nowMs() });
+}
+async function decryptRecovery(key){
+  const store = getRecStore();
+  if(!store) return null;
+  const plain = await crypto.subtle.decrypt({ name:"AES-GCM", iv: b64ToBuf(store.iv) }, key, b64ToBuf(store.cipher));
+  return JSON.parse(td.decode(plain) || "[]");
+}
+
 
 async function encryptPending(arr, key, saltB64){
   const iv = randomBytes(GCM_IV_BYTES);
@@ -112,24 +133,6 @@ async function migratePendingToHistory(){
 }
 
 
-async function persistSubmissions(){
-  if(!_cryptoKey) throw new Error("Staff locked");
-  const iv = randomBytes(GCM_IV_BYTES);
-  const data = te.encode(JSON.stringify(_subsCache));
-  const cipher = await crypto.subtle.encrypt({ name:"AES-GCM", iv }, _cryptoKey, data);
-  setSubStore({ v: ENC_VERSION, iv: bufToB64(iv), cipher: bufToB64(cipher), updatedAt: Date.now() });
-}
-
-// Move any plaintext items into encrypted store when staff unlocks
-async function encryptSubmissionsIfNeeded(){
-  const pending = JSON.parse(localStorage.getItem("auto_intakes") || "[]");
-  if(!pending.length) return;
-  await loadDecryptedSubmissions();
-  _subsCache.unshift(...pending);
-  await persistSubmissions();
-  localStorage.removeItem("auto_intakes");
-}
-
 
 function getLockState(){ try { return JSON.parse(localStorage.getItem(LOCK_STATE_KEY) || "{}"); } catch { return {}; } }
 function setLockState(s){ localStorage.setItem(LOCK_STATE_KEY, JSON.stringify(s || {})); }
@@ -197,6 +200,7 @@ function showModal(show){
   const err = document.getElementById("staffLoginError");
   if(err) err.style.display = "none";
   if(show){ setTimeout(()=> document.getElementById("staffPassInput")?.focus(), 30); }
+  if (show) setUnlockMode("pass");
   else { const input = document.getElementById("staffPassInput"); if(input) input.value = ""; }
 }
 function modalError(msg){ const err = document.getElementById("staffLoginError"); if(err){ err.textContent = msg; err.style.display = "block"; } }
@@ -210,7 +214,38 @@ function recordBadAttempt(){
     setLockState({ tries, backoff: extra, lockedUntil: nowMs()+extra });
   } else setLockState({ ...s, tries });
 }
+
 function clearLockout(){ setLockState({}); }
+
+let _unlockMode = "pass"; // "pass" | "recovery"
+
+function setUnlockMode(mode){
+  _unlockMode = mode;
+  const title   = document.querySelector("#staffLoginModal h3");
+  const hint    = document.querySelector("#staffLoginModal p"); // fixed: grab the hint <p>
+  const input   = document.getElementById("staffPassInput");
+  const linkRec = document.getElementById("linkRecovery");
+  const linkPass= document.getElementById("linkPass");
+
+  if (mode === "recovery"){
+    if (title) title.textContent = "Recovery Unlock";
+    if (hint)  hint.textContent  = "Enter your Recovery Code to access saved intakes and set a new staff passphrase.";
+    if (input) { input.value = ""; input.placeholder = "Recovery Code"; input.type = "password"; }
+    if (linkRec)  linkRec.style.display = "none";
+    if (linkPass) linkPass.style.display = "inline";
+  } else {
+    if (title) title.textContent = "Staff Unlock";
+    if (hint)  hint.textContent  = "Enter your staff passphrase to unlock saved intakes.";
+    if (input) { input.value = ""; input.placeholder = "Staff passphrase"; input.type = "password"; }
+    if (linkRec)  linkRec.style.display = "inline";
+    if (linkPass) linkPass.style.display = "none";
+  }
+
+  const err = document.getElementById("staffLoginError");
+  if (err) err.style.display = "none";
+}
+
+
 
 // Don't auto-open the modal; only open it from the Unlock button
 function requireStaffUnlockIfNeeded(){
@@ -224,53 +259,141 @@ async function loadDecryptedHistory(){
   _historyCache = await decryptHistory(_cryptoKey);
   return _historyCache;
 }
+
 async function persistHistory(){
   if(!_cryptoKey) throw new Error("Staff is locked.");
   const saltB64 = getEncStore()?.salt || bufToB64(randomBytes(SALT_BYTES));
   await encryptHistory(_historyCache, _cryptoKey, saltB64);
+
+  // If a recovery code is configured and we have the recovery key in memory this session,
+  // also refresh the recovery-encrypted copy so it stays up to date.
+  const rec = getRecStore();
+  if (rec && _recoveryKey) {
+    const recSalt = rec.salt || bufToB64(randomBytes(SALT_BYTES));
+    await encryptRecovery(_historyCache, _recoveryKey, recSalt);
+  }
 }
+
+async function setRecoveryCodeFlow(){
+  if (!STAFF_UNLOCKED) { alert("Unlock Staff first."); return; }
+  const code = prompt("Create a Recovery Code (min 8 characters):", "");
+  if (!code || code.length < 8) { alert("Recovery Code must be at least 8 characters."); return; }
+
+  // Derive key from code with a fresh salt
+  const salt = randomBytes(SALT_BYTES);
+  const saltB64 = bufToB64(salt);
+  const key = await deriveKeyFromPass(code, salt);
+
+  await loadDecryptedHistory(); // make sure _historyCache is current
+  await encryptRecovery(_historyCache, key, saltB64);
+  _recoveryKey = key; // keep for this session so it stays synced
+
+  alert("Recovery Code set. Keep it safe!");
+}
+
+async function removeRecoveryCodeFlow(){
+  if (!STAFF_UNLOCKED) { alert("Unlock Staff first."); return; }
+  if (!getRecStore()) { alert("No Recovery Code is configured."); return; }
+  if (!confirm("Remove Recovery Code and its encrypted backup?")) return;
+  localStorage.removeItem(RECOVERY_STORAGE_KEY);
+  _recoveryKey = null;
+  alert("Recovery Code removed.");
+}
+
 
 // wire buttons AFTER DOM (don’t call renderLanding here)
 window.addEventListener("DOMContentLoaded", ()=>{
+  // Open/close modal
   document.getElementById("btnStaffUnlock")?.addEventListener("click", ()=> showModal(true));
   document.getElementById("btnStaffCancel")?.addEventListener("click", ()=> showModal(false));
+
+  // Toggle between passphrase and recovery modes (moved out of Lock handler)
+  document.getElementById("linkRecovery")?.addEventListener("click", (e)=>{ e.preventDefault(); setUnlockMode("recovery"); });
+  document.getElementById("linkPass")?.addEventListener("click", (e)=>{ e.preventDefault(); setUnlockMode("pass"); });
+
+  // Lock button
   document.getElementById("btnStaffLock")?.addEventListener("click", ()=>{
     STAFF_UNLOCKED = false;
     _cryptoKey = null;
     _historyCache = [];
-    if(window.state) window.state.isStaff = false;
+    if (window.state) window.state.isStaff = false;
     updateStaffUI();
-    // go back to landing if user was in staff view
-    if(typeof renderLanding === "function") renderLanding();
+    if (typeof renderLanding === "function") renderLanding();
   });
 
-document.getElementById("btnStaffSubmit")?.addEventListener("click", async ()=>{
-  if(checkLockedOut()) { modalError("Too many attempts. Try again later."); return; }
-  const pass = document.getElementById("staffPassInput")?.value || "";
-  if(!pass || pass.length < 6){ modalError("Use a passphrase of at least 6 characters."); return; }
+  // Submit (handles both passphrase and recovery flows)
+  document.getElementById("btnStaffSubmit")?.addEventListener("click", async ()=>{
+    if(_unlockMode === "recovery"){
+      // --- Recovery Unlock path ---
+      if(checkLockedOut()) { modalError("Too many attempts. Try again later."); return; }
+      const code = document.getElementById("staffPassInput")?.value || "";
+      if(!code || code.length < 8){ modalError("Recovery Code must be at least 8 characters."); return; }
 
-  try{
-    const { key, arr } = await ensureInitializedForPass(pass);
-    _cryptoKey = key;
-    _historyCache = arr;
-    STAFF_UNLOCKED = true;
-    await migratePendingToHistory();
-    if(window.state) window.state.isStaff = true; // keep compatibility with your UI
+      const rec = getRecStore();
+      if(!rec){ modalError("No Recovery Code is set on this device."); return; }
 
+      try{
+        const recKey = await deriveKeyFromPass(code, b64ToBuf(rec.salt));
+        const arr = await decryptRecovery(recKey); // throws if wrong code
 
-    clearLockout();
-    showModal(false);
-    updateStaffUI();
-    if(typeof renderStaffView === "function") renderStaffView();
-  }catch(e){
-    recordBadAttempt();
-    modalError("Passphrase incorrect.");
-  }
-});
+        // Prompt for NEW passphrase
+        let newPass = prompt("Recovery successful. Enter a NEW staff passphrase (min 6 characters):", "");
+        if(!newPass || newPass.length < 6){ modalError("New passphrase must be at least 6 characters."); return; }
 
+        const salt = randomBytes(SALT_BYTES);
+        const saltB64 = bufToB64(salt);
+        const key = await deriveKeyFromPass(newPass, salt);
+        _cryptoKey = key;
+        _historyCache = Array.isArray(arr) ? arr : [];
+        STAFF_UNLOCKED = true;
+
+        await encryptHistory(_historyCache, _cryptoKey, saltB64);
+
+        // Keep recovery copy in sync now that we have the recKey
+        _recoveryKey = recKey;
+        await persistHistory(); // also refreshes recovery copy if present
+
+        clearLockout();
+        showModal(false);
+        updateStaffUI();
+
+        // Pull in any pending (customer-mode) records
+        await migratePendingToHistory();
+
+        if(typeof renderStaffView === "function") renderStaffView();
+      }catch(e){
+        recordBadAttempt();
+        modalError("Recovery Code incorrect.");
+      }
+      return;
+    }
+
+    // --- Normal Staff Unlock path ---
+    if(checkLockedOut()) { modalError("Too many attempts. Try again later."); return; }
+    const pass = document.getElementById("staffPassInput")?.value || "";
+    if(!pass || pass.length < 6){ modalError("Use a passphrase of at least 6 characters."); return; }
+
+    try{
+      const { key, arr } = await ensureInitializedForPass(pass);
+      _cryptoKey = key;
+      _historyCache = arr;
+      STAFF_UNLOCKED = true;
+
+      await migratePendingToHistory();
+
+      clearLockout();
+      showModal(false);
+      updateStaffUI();
+      if(typeof renderStaffView === "function") renderStaffView();
+    }catch(e){
+      recordBadAttempt();
+      modalError("Passphrase incorrect.");
+    }
+  });
 
   updateStaffUI();
 });
+
 
 
 // keep recent intakes on THIS device only (not synced)
@@ -396,7 +519,13 @@ async function renderStaffView(){
       ${escapeHtml(x.identity?.make || x.vehicle?.make || "")}
       ${escapeHtml(x.identity?.model || x.vehicle?.model || "")}
     </td>
-    <td>${escapeHtml(window.TREES?.[x.topic]?.title || x.topic || "—")}</td>
+    <td>${escapeHtml(
+  window.TREES?.[ (x.visit && x.visit.topic) || x.topic ]?.title
+  || (x.visit && x.visit.topic)
+  || x.topic
+  || "—"
+)}</td>
+
     <td>${new Date(x.visit?.startTime || x.when).toLocaleString()}</td>
     <td><button class="btn" onclick='viewIntake(${i})'>Open</button></td>
   </tr>
@@ -424,15 +553,33 @@ async function renderStaffView(){
       </div>
     `;
 
-    container.innerHTML = `
-      <div class="card">
-        <h2>Staff — Recent Intakes (this device)</h2>
-        ${table}
-      </div>
-      ${submissionsHtml}
-      <div class="actions" style="margin-top:12px">
-        <button class="btn secondary" onclick="exitStaffMode()">Exit</button>
-      </div>`;
+
+    const recoveryHtml = `
+  <div class="divider"></div>
+  <div class="card">
+    <div class="muted">Recovery (optional)</div>
+    <h3 style="margin:6px 0 12px">Recovery Code</h3>
+    <div class="flex">
+      <button class="btn" onclick="setRecoveryCodeFlow()">Set / Update Recovery Code</button>
+      <button class="btn secondary" onclick="removeRecoveryCodeFlow()">Remove</button>
+    </div>
+    <div class="muted" style="margin-top:6px">
+      If you ever forget the staff passphrase, use the Recovery Code on the unlock screen to regain access and set a new passphrase.
+    </div>
+  </div>
+`;
+
+container.innerHTML = `
+  <div class="card">
+    <h2>Staff — Recent Intakes (this device)</h2>
+    ${table}
+  </div>
+  ${submissionsHtml}
+  ${recoveryHtml}
+  <div class="actions" style="margin-top:12px">
+    <button class="btn secondary" onclick="exitStaffMode()">Exit</button>
+  </div>`;
+
   }catch(e){
     container.innerHTML = `
       <div class="card">
@@ -450,35 +597,36 @@ function viewIntake(idx){
   const x = _historyCache?.[idx];
   if (!x) return;
 
-  const answersSummary = Array.isArray(x.trail) && x.trail.length
-    ? x.trail
-        .filter(step => step.type !== "outcome")
-        .map((step, i) => {
-          if (step.choiceLabel) return `${i+1}. ${step.prompt} — ${step.choiceLabel}`;
-          if (step.multi && step.multi.length) return `${i+1}. ${step.prompt} — ${step.multi.join(", ")}`;
-          return `${i+1}. ${step.prompt}`;
-        })
-        .join("<br>")
-    : (Object.keys(x.answers || {}).length 
-        ? escapeHtml(JSON.stringify(x.answers, null, 2)) 
-        : "—");
+  let answersSummary = "—";
+  if (Array.isArray(x.trail) && x.trail.length) {
+    answersSummary = x.trail
+      .filter(step => step.type !== "outcome")
+      .map((step, i) => {
+        if (step.choiceLabel) return `${i+1}. ${escapeHtml(step.prompt)} — ${escapeHtml(step.choiceLabel)}`;
+        if (step.multi && step.multi.length) return `${i+1}. ${escapeHtml(step.prompt)} — ${step.multi.map(escapeHtml).join(", ")}`;
+        return `${i+1}. ${escapeHtml(step.prompt)}`;
+      })
+      .join("<br>");
+  } else if (x.answers && Object.keys(x.answers).length) {
+    answersSummary = escapeHtml(JSON.stringify(x.answers, null, 2));
+  }
 
   const year  = x.identity?.year  || x.vehicle?.year  || "—";
   const make  = x.identity?.make  || x.vehicle?.make  || "";
   const model = x.identity?.model || x.vehicle?.model || "";
 
-  const created = x.visit?.startTime 
-    ? new Date(x.visit.startTime).toLocaleString() 
+  const created = x.visit?.startTime
+    ? new Date(x.visit.startTime).toLocaleString()
     : (x.when ? new Date(x.when).toLocaleString() : "—");
 
   document.querySelector("#view").innerHTML = `
     <div class="card">
       <div class="muted">Outcome</div>
       <h2 style="margin:6px 0 10px">
-  ${escapeHtml(x.outcomeTitle || "Intake Summary")} ${x.ro ? `(RO: ${escapeHtml(x.ro)})` : ""}
+        ${escapeHtml(x.outcomeTitle || "Intake Summary")} ${x.ro ? `(RO: ${escapeHtml(x.ro)})` : ""}
       </h2>
 
-      <div class="row"><span class="tag">Priority: ${x.priority || "—"}</span></div>
+      <div class="row"><span class="tag">Priority: ${escapeHtml(x.priority || "—")}</span></div>
 
       <div class="two-col">
         <div>
@@ -490,7 +638,7 @@ function viewIntake(idx){
           <div class="row"></div>
           <div class="muted">Structured answers</div>
           <div class="card" style="margin-top:6px; line-height:1.6">
-            ${answersSummary || "—"}
+            ${answersSummary}
           </div>
         </div>
 
@@ -515,6 +663,7 @@ function viewIntake(idx){
       </div>
     </div>`;
 }
+
 
 
 
@@ -788,18 +937,19 @@ function renderQuestion(nodeId){
 
   const progress = progressPct();
   const optionsHtml = (node.options || []).map((opt,i) => {
-    if (node.type === "single") {
-      return `<button class="btn" style="width:100%" onclick="answerSingle('${nodeId}',${i})">${opt.label}</button>`;
-    } else {
-      const key = opt.key || `${nodeId}_${i}`;
-      const checked = state.answers[key] ? "checked" : "";
-      return `
-        <label style="display:flex;gap:10px;align-items:flex-start">
-          <input type="checkbox" ${checked} onchange="toggleMulti('${key}', this.checked)"/>
-          <span>${opt.label}</span>
-        </label>`;
-    }
-  }).join("");
+  if (node.type === "single") {
+    return `<button class="btn" style="width:100%" onclick="answerSingle('${nodeId}',${i})">${escapeHtml(opt.label)}</button>`;
+  } else {
+    const key = opt.key || `${nodeId}_${i}`;
+    const checked = state.answers[key] ? "checked" : "";
+    return `
+      <label style="display:flex;gap:10px;align-items:flex-start">
+        <input type="checkbox" ${checked} onchange="toggleMulti('${key}', this.checked)"/>
+        <span>${escapeHtml(opt.label)}</span>
+      </label>`;
+  }
+}).join("");
+
 
   const nextBtn = node.type === "multi"
     ? `<button class="btn primary" onclick="goNextFromMulti('${nodeId}')">Next</button>`
@@ -812,11 +962,11 @@ function renderQuestion(nodeId){
 
     <div class="card">
       <div class="muted">Topic</div>
-      <h3 style="margin:6px 0 12px">${tree.title}</h3>
+      <h3 style="margin:6px 0 12px">${escapeHtml(tree.title)}</h3>
 
       <div class="row">
         <div class="muted">Question</div>
-        <h2 style="margin:6px 0 10px">${node.prompt}</h2>
+        <h2 style="margin:6px 0 10px">${escapeHtml(node.prompt)}</h2>
         <div class="row">${optionsHtml}</div>
         <div class="actions">
           <button class="btn secondary" onclick="goBack()">Back</button>
@@ -832,19 +982,23 @@ function renderOutcome(nodeId){
   const tree = TREES[state.activeTreeKey];
   const node = tree.nodes[nodeId];
 
+  // Build answers summary from the live state trail
+  // BEFORE
   const answersSummary = state.trail
-    .filter(step => step.type !== "outcome")
-    .map((step, idx) => {
-      if (step.choiceLabel) return `${idx+1}. ${step.prompt} — ${step.choiceLabel}`;
-      if (step.multi && step.multi.length) return `${idx+1}. ${step.prompt} — ${step.multi.join(", ")}`;
-      return `${idx+1}. ${step.prompt}`;
-    }).join("<br>");
+  .filter(step => step.type !== "outcome")
+  .map((step, idx) => {
+    if (step.choiceLabel) return `${idx+1}. ${escapeHtml(step.prompt)} — ${escapeHtml(step.choiceLabel)}`;
+    if (step.multi && step.multi.length) return `${idx+1}. ${escapeHtml(step.prompt)} — ${step.multi.map(escapeHtml).join(", ")}`;
+    return `${idx+1}. ${escapeHtml(step.prompt)}`;
+  })
+  .join("<br>");
+
 
   view.innerHTML = `
     <div class="card">
       <div class="muted">Outcome</div>
-      <h2 style="margin:6px 0 10px">${node.title}</h2>
-      <div class="row"><span class="tag">Priority: ${node.priority || "—"}</span></div>
+      <h2 style="margin:6px 0 10px">${escapeHtml(node.title)}</h2>
+      <div class="row"><span class="tag">Priority: ${escapeHtml(node.priority || "—")}</span></div>
 
       <div class="two-col">
         <div>
@@ -875,7 +1029,7 @@ function renderOutcome(nodeId){
           <div class="row"></div>
           <div class="muted">Tech notes (auto from app)</div>
           <div class="card" style="margin-top:6px">
-            ${(node.notes||[]).map(n=>`• ${n}`).join("<br>") || "—"}
+            ${(node.notes||[]).map(n=>`• ${escapeHtml(n)}`).join("<br>") || "—"}
           </div>
         </div>
       </div>
@@ -894,6 +1048,7 @@ function renderOutcome(nodeId){
     </div>
   `;
 }
+
 
 function kv(k, v){
   return `<div class="kv">
@@ -1068,8 +1223,8 @@ function buildSubmissionPayload(id, finalOutcomeId){
 }
 
 function loadAllSubmissions(){
-  // Only show when staff is unlocked; items live in _historyCache
-  return STAFF_UNLOCKED ? (_historyCache || []) : [];
+  // Only manual saves (they have an `id`)
+  return STAFF_UNLOCKED ? (_historyCache || []).filter(x => x && x.id) : [];
 }
 
 function renderSubmissionsList(){

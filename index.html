@@ -2,85 +2,91 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy"
-  content="default-src 'self';
-           script-src 'self';
-           style-src 'self' 'unsafe-inline';
-           img-src 'self' data:;
-           object-src 'none';
-           base-uri 'self';
-           form-action 'self';
-           frame-ancestors 'self';
-           upgrade-insecure-requests">
-  <meta name="referrer" content="same-origin">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="manifest" href="manifest.webmanifest">
+
+  <!-- PWA bits -->
+  <link rel="manifest" href="manifest.webmanifest?v=1.9.1">
   <meta name="theme-color" content="#0f172a">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
+
   <title>Auto Service Intake</title>
-  <link rel="stylesheet" href="styles/style.css?v=1.8.6" />
-  
+
+  <!-- CSS -->
+  <link rel="stylesheet" href="styles/style.css?v=1.9.1" />
+
+  <!-- CSP: allow self + a single hashed inline block for SW registration -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+                 script-src 'self' 'sha256-p43ID8/YlvzS8IKLeKnSkaYaY/HbO1yWL6OXLZNOCHE=';
+                 style-src 'self' 'unsafe-inline';
+                 img-src 'self' data:;
+                 object-src 'none';
+                 base-uri 'self';
+                 form-action 'self';
+                 frame-ancestors 'self';
+                 upgrade-insecure-requests">
+  <meta name="referrer" content="same-origin">
 </head>
+
 <body>
-  <div class="app" id="app">
-<header>
-  <h1>Auto Service Intake</h1>
-  <div class="right">
-    <span class="time" id="clock"></span>
+  <div class="app">
+    <header>
+      <h1>Auto Service Intake</h1>
+      <div class="right">
+        <span id="staffStatus" class="pill">Customer Mode (Locked)</span>
+        <button id="btnStaffUnlock" class="btn">Unlock Staff</button>
+        <button id="btnStaffLock" class="btn secondary" style="display:none">Lock</button>
+        <span id="clock" class="time"></span>
+      </div>
+    </header>
+
+    <main class="content">
+      <!-- All screens render into this -->
+      <div id="view"></div>
+    </main>
   </div>
 
+  <!-- Staff Login / Recovery Modal (single instance) -->
+  <div id="staffLoginModal"
+       style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.6);
+              align-items:center; justify-content:center;">
+    <div class="card" style="width:min(520px, 92%);">
+      <h3 style="margin:0 0 8px">Staff Unlock</h3>
+      <!-- This <p> is swapped by JS when switching to Recovery mode -->
+      <p class="muted" style="margin:0 0 12px">
+        Enter your staff passphrase to unlock saved intakes.
+      </p>
 
-  <div id="staffBar" style="display:flex;gap:.5rem;align-items:center;justify-content:flex-end;padding:.5rem;border-bottom:1px solid #eee;">
-    <span id="staffStatus" style="font-weight:600;">Customer Mode (Locked)</span>
-    <button id="btnStaffUnlock" class="btn">Unlock Staff</button>
-    <button id="btnStaffLock" class="btn" style="display:none;">Lock</button>
-  </div>
-</header>
+      <div class="row">
+        <label for="staffPassInput">Passphrase</label>
+        <input id="staffPassInput" type="password" autocomplete="current-password" inputmode="text" />
+      </div>
 
-<!-- Staff Unlock Modal -->
-<div id="staffLoginModal" style="position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;">
-  <div class="card" style="padding:1rem;width:min(420px,90vw);">
-    <h3 style="margin-top:0">Staff Unlock</h3>
-    <p class="muted" style="margin:.5rem 0">Enter your staff passphrase to unlock saved intakes.</p>
+      <div id="staffLoginError" class="muted"
+           style="color:#ef4444; display:none; margin-top:6px"></div>
 
-    <!-- remove inline colors/borders so your input styles apply -->
-    <input id="staffPassInput" type="password" placeholder="Staff passphrase" style="width:100%;padding:.6rem;">
+      <div class="actions">
+        <button id="btnStaffSubmit" class="btn primary">Unlock</button>
+        <button id="btnStaffCancel" class="btn secondary">Cancel</button>
 
-    <div style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:.75rem;">
-      <button id="btnStaffCancel" class="btn btn-secondary">Cancel</button>
-      <button id="btnStaffSubmit" class="btn btn-primary">Unlock</button>
+        <!-- Switch between passphrase and recovery -->
+        <a id="linkRecovery" href="#" class="btn ghost">Use Recovery Code</a>
+        <a id="linkPass" href="#" class="btn ghost" style="display:none">Use Passphrase</a>
+      </div>
     </div>
-
-    <div id="staffLoginError" style="color:var(--danger);margin-top:.5rem;display:none;"></div>
   </div>
-</div>
 
-
-  - <div class="content" id="view"><section id="staff-view">
--   <table class="table">
--     <thead>
--       <tr>
--         <th>#</th><th>RO</th><th>Vehicle</th><th>Topic</th><th>When</th><th></th>
--       </tr>
--     </thead>
--     <tbody id="staffTableBody">
--       <tr><td colspan="6" style="opacity:.7;">No records yet.</td></tr>
--     </tbody>
--   </table>
-- </section>
-- </div>
-+ <div class="content" id="view"></div>
-
-
- <script src="js/app.js?v=1.8.6"></script>
-<script src="js/boot.js?v=1.8.6"></script>
+  <!-- Exact-inline SW registration allowed by the CSP hash above -->
   <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        // use relative path if hosted under a subfolder
-        navigator.serviceWorker.register('sw.js');
-      });
-    }
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js');
+  });
+}
   </script>
+
+  <!-- JS (external; defer keeps CSP happy and preserves order) -->
+  <script src="js/boot.js?v=1.9.1" defer></script>
+  <script src="js/app.js?v=1.9.1" defer></script>
 </body>
 </html>
