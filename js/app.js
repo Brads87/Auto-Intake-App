@@ -21,7 +21,6 @@ const td = new TextDecoder();
 // When staff is locked, we encrypt intakes with this fallback secret,
 // into a separate encrypted blob. On staff unlock, we decrypt + merge
 // into the main history store and delete the pending blob.
-const FALLBACK_SECRET = "Euo2V4cT3Cq0o3h1yVso-7bZq8Z_1fQx2jXrBrAd$sYt6uKq5dLe9Ns4Hg1Jv0D"; // <= choose a new random string per deploy
 const PENDING_ENC_STORAGE_KEY = "intakePendingEnc";       // { v, salt, iv, cipher, updatedAt }
 
 // Pending-store helpers (structured just like the main enc store)
@@ -48,12 +47,58 @@ function b64ToBuf(b64){ return Uint8Array.from(atob(b64), c => c.charCodeAt(0)).
 function randomBytes(n){ const u8 = new Uint8Array(n); crypto.getRandomValues(u8); return u8.buffer; }
 
 
+// --- IndexedDB helpers for a non-extractable AES key (pending store) ---
+const DB_NAME = 'intake-sec';
+const STORE   = 'keys';
+const PENDING_KEY_NAME = 'pending-v1';
+
+function idbOpen(){
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(STORE);
+    req.onsuccess = () => res(req.result);
+    req.onerror   = () => rej(req.error);
+  });
+}
+async function idbGet(key){
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const r  = tx.objectStore(STORE).get(key);
+    r.onsuccess = () => res(r.result);
+    r.onerror   = () => rej(r.error);
+  });
+}
+async function idbSet(key, val){
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    const r  = tx.objectStore(STORE).put(val, key);
+    r.onsuccess = () => res();
+    r.onerror   = () => rej(r.error);
+  });
+}
+
+// Create or fetch a non-extractable AES-GCM key for pending encryption.
+async function getOrCreatePendingKey(){
+  let key = await idbGet(PENDING_KEY_NAME);
+  if (key) return key;
+  key = await crypto.subtle.generateKey(
+    { name: 'AES-GCM', length: 256 },
+    /* extractable */ false,
+    ['encrypt','decrypt']
+  );
+  await idbSet(PENDING_KEY_NAME, key);
+  return key;
+}
+
+
 async function migratePendingToHistory(){
   const p = getPendingEncStore();
   if(!p || !_cryptoKey) return;
   try {
-    const fbKey = await deriveKeyFromPass(FALLBACK_SECRET, b64ToBuf(p.salt));
-    const pendingArr = await decryptPending(fbKey);
+    const pendingKey = await getOrCreatePendingKey();
+    const pendingArr = await decryptPending(pendingKey);
     if (Array.isArray(pendingArr) && pendingArr.length) {
       await loadDecryptedHistory(); // ensure latest main cache
       _historyCache.unshift(...pendingArr);
@@ -61,12 +106,10 @@ async function migratePendingToHistory(){
       await persistHistory(); // re-encrypt under staff key
     }
   } catch (e) {
-    console.warn("Pending decrypt failed with fallback key; skipping migration.", e);
+    console.warn("Pending decrypt failed; skipping migration.", e);
   }
   localStorage.removeItem(PENDING_ENC_STORAGE_KEY);
 }
-
-
 
 
 async function persistSubmissions(){
@@ -242,19 +285,17 @@ async function saveLocalIntake(intake){
       await loadDecryptedHistory();
       _historyCache.unshift(intake);
       _historyCache = _historyCache.slice(0, MAX_LOCAL_HISTORY);
-      await persistHistory(); // uses the current main store salt
+      await persistHistory();
     } else {
-      // Staff locked → write to encrypted pending blob using fallback secret
+      // Staff locked → encrypted pending (no repo secrets)
+      const key = await getOrCreatePendingKey();
       let p = getPendingEncStore();
-      let saltB64, key, arr = [];
+      let arr = [];
+      let saltB64 = "-"; // legacy field only
+
       if (p) {
-        saltB64 = p.salt;
-        key = await deriveKeyFromPass(FALLBACK_SECRET, b64ToBuf(saltB64));
+        if (p.salt) saltB64 = p.salt;
         try { arr = await decryptPending(key); } catch { arr = []; }
-      } else {
-        const salt = randomBytes(SALT_BYTES);
-        saltB64 = bufToB64(salt);
-        key = await deriveKeyFromPass(FALLBACK_SECRET, salt);
       }
       arr.unshift(intake);
       arr = arr.slice(0, MAX_LOCAL_HISTORY);
@@ -264,6 +305,7 @@ async function saveLocalIntake(intake){
     console.error("saveLocalIntake failed:", e);
   }
 }
+
 
 // ADD THIS DIRECTLY UNDER saveLocalIntake(...) — do not modify saveLocalIntake.
 function buildAutoSavedIntake(outcomeId){
@@ -345,20 +387,21 @@ async function renderStaffView(){
       new Date(b.visit?.startTime || b.when) - new Date(a.visit?.startTime || a.when)
     );
 
-    const rows = data.map((x, i) => `
-      <tr>
-        <td>${i + 1}</td>
-        <td>${x.ro || "—"}</td>
-        <td>
-          ${(x.identity?.year || x.vehicle?.year || "—")}
-          ${(x.identity?.make || x.vehicle?.make || "")}
-          ${(x.identity?.model || x.vehicle?.model || "")}
-        </td>
-        <td>${(window.TREES?.[x.topic]?.title || x.topic || "—")}</td>
-        <td>${new Date(x.visit?.startTime || x.when).toLocaleString()}</td>
-        <td><button class="btn" onclick='viewIntake(${i})'>Open</button></td>
-      </tr>
+   const rows = data.map((x, i) => `
+  <tr>
+    <td>${i + 1}</td>
+    <td>${escapeHtml(x.ro || "—")}</td>
+    <td>
+      ${escapeHtml(x.identity?.year || x.vehicle?.year || "—")}
+      ${escapeHtml(x.identity?.make || x.vehicle?.make || "")}
+      ${escapeHtml(x.identity?.model || x.vehicle?.model || "")}
+    </td>
+    <td>${escapeHtml(window.TREES?.[x.topic]?.title || x.topic || "—")}</td>
+    <td>${new Date(x.visit?.startTime || x.when).toLocaleString()}</td>
+    <td><button class="btn" onclick='viewIntake(${i})'>Open</button></td>
+  </tr>
     `).join("");
+
 
     const table = data.length
       ? `<table class="table">
@@ -432,8 +475,9 @@ function viewIntake(idx){
     <div class="card">
       <div class="muted">Outcome</div>
       <h2 style="margin:6px 0 10px">
-        ${x.outcomeTitle || "Intake Summary"} ${x.ro ? `(RO: ${x.ro})` : ""}
+  ${escapeHtml(x.outcomeTitle || "Intake Summary")} ${x.ro ? `(RO: ${escapeHtml(x.ro)})` : ""}
       </h2>
+
       <div class="row"><span class="tag">Priority: ${x.priority || "—"}</span></div>
 
       <div class="two-col">
@@ -619,7 +663,15 @@ window.TREES = {
 const $ = (sel) => document.querySelector(sel);
 const view = $("#view");
 
-function escapeHtml(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function escapeHtml(v){
+  return String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function fmtDateTime(ts) { return new Date(ts).toLocaleString(); }
 
 // ---------- App State ----------
@@ -843,7 +895,13 @@ function renderOutcome(nodeId){
   `;
 }
 
-function kv(k,v){ return `<div class="kv"><div class="muted">${k}</div><div class="hl">${v}</div></div>`; }
+function kv(k, v){
+  return `<div class="kv">
+    <div class="muted">${escapeHtml(k)}</div>
+    <div class="hl">${escapeHtml(v ?? "—")}</div>
+  </div>`;
+}
+
 
 function resetForNewIntake(){
   state.activeTreeKey = null;
@@ -969,17 +1027,15 @@ async function saveSubmission(finalOutcomeId){
       _historyCache = _historyCache.slice(0, MAX_LOCAL_HISTORY);
       await persistHistory();
     } else {
-      // Staff locked → write to encrypted pending blob using fallback secret
+      // Staff locked → write to encrypted pending blob using non-extractable AES key
+      const key = await getOrCreatePendingKey();
       let p = getPendingEncStore();
-      let saltB64, key, arr = [];
+      let arr = [];
+      let saltB64 = "-"; // legacy field only
+
       if (p) {
-        saltB64 = p.salt;
-        key = await deriveKeyFromPass(FALLBACK_SECRET, b64ToBuf(saltB64));
+        if (p.salt) saltB64 = p.salt; // kept for schema continuity
         try { arr = await decryptPending(key); } catch { arr = []; }
-      } else {
-        const salt = randomBytes(SALT_BYTES);
-        saltB64 = bufToB64(salt);
-        key = await deriveKeyFromPass(FALLBACK_SECRET, salt);
       }
       arr.unshift(payload);
       arr = arr.slice(0, MAX_LOCAL_HISTORY);
@@ -995,6 +1051,7 @@ async function saveSubmission(finalOutcomeId){
     alert("Save failed.");
   }
 }
+
 
 
 function buildSubmissionPayload(id, finalOutcomeId){
@@ -1025,8 +1082,9 @@ function renderSubmissionsList(){
           <div class="flex" style="justify-content:space-between">
             <div>
               <div class="muted">${new Date(s.visit?.startTime || s.when).toLocaleString()}</div>
-              <div style="margin-top:6px"><strong>${s.identity?.name || "Customer"}</strong> — ${s.identity?.year||""} ${s.identity?.make||""} ${s.identity?.model||""}</div>
-              <div class="muted" style="margin-top:4px">${s.outcomeTitle || "—"}</div>
+              <div style="margin-top:6px"><strong>${escapeHtml(s.identity?.name || "Customer")}</strong>
+               — ${escapeHtml(s.identity?.year||"")} ${escapeHtml(s.identity?.make||"")} ${escapeHtml(s.identity?.model||"")}</div>
+              <div class="muted" style="margin-top:4px">${escapeHtml(s.outcomeTitle || "—")}</div>
             </div>
             <div class="flex">
               <button class="btn" onclick='previewSaved(${JSON.stringify(s.id)})'>View</button>
@@ -1041,7 +1099,7 @@ function renderSubmissionsList(){
 function previewSaved(id){
   const item = (_historyCache || []).find(x => x.id === id);
   if(!item) return;
-  const w = window.open("", "_blank");
+  const w = window.open("", "_blank", "noopener,noreferrer");
   w.document.write(`<pre style="white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas">${escapeHtml(JSON.stringify(item, null, 2))}</pre>`);
   w.document.close();
 }
