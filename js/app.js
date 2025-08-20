@@ -215,6 +215,36 @@ function recordBadAttempt(){
   } else setLockState({ ...s, tries });
 }
 
+function answerInput(nodeId){
+  const tree = TREES[state.activeTreeKey];
+  const node = tree.nodes[nodeId];
+  const ta = document.getElementById("freeText");
+  const text = (ta?.value || "").slice(0, 1000); // cap length
+
+  // record in answers + trail
+  if (node.saveAs) state.answers[node.saveAs] = text;
+  state.trail.push({
+    type: "input",
+    nodeId,
+    prompt: node.prompt || "Describe the issue:",
+    inputText: text,
+    prevNodeId: nodeId
+  });
+
+  const nextId = node.next;
+  const next = tree.nodes[nextId];
+  if (!next) { alert("End of branch."); renderLanding(); return; }
+
+  if (next.type === "outcome") {
+    state.trail.push({ type: "outcome", nodeId: nextId });
+    saveLocalIntake(buildAutoSavedIntake(nextId));
+    renderOutcome(nextId);
+  } else {
+    renderQuestion(nextId);
+  }
+}
+
+
 function clearLockout(){ setLockState({}); }
 
 let _unlockMode = "pass"; // "pass" | "recovery"
@@ -597,19 +627,28 @@ function viewIntake(idx){
   const x = _historyCache?.[idx];
   if (!x) return;
 
-  let answersSummary = "—";
-  if (Array.isArray(x.trail) && x.trail.length) {
-    answersSummary = x.trail
-      .filter(step => step.type !== "outcome")
-      .map((step, i) => {
-        if (step.choiceLabel) return `${i+1}. ${escapeHtml(step.prompt)} — ${escapeHtml(step.choiceLabel)}`;
-        if (step.multi && step.multi.length) return `${i+1}. ${escapeHtml(step.prompt)} — ${step.multi.map(escapeHtml).join(", ")}`;
-        return `${i+1}. ${escapeHtml(step.prompt)}`;
-      })
-      .join("<br>");
-  } else if (x.answers && Object.keys(x.answers).length) {
-    answersSummary = escapeHtml(JSON.stringify(x.answers, null, 2));
-  }
+    let answersSummary = "—";
+if (Array.isArray(x.trail) && x.trail.length) {
+  answersSummary = x.trail
+    .filter(step => step.type !== "outcome")
+    .map((step, i) => {
+      if (step.type === "input") {
+        return `${i+1}. ${escapeHtml(step.prompt)} — ${escapeHtml(step.inputText || "")}`;
+      }
+      if (step.choiceLabel) {
+        return `${i+1}. ${escapeHtml(step.prompt)} — ${escapeHtml(step.choiceLabel)}`;
+      }
+      if (step.multi && step.multi.length) {
+        return `${i+1}. ${escapeHtml(step.prompt)} — ${step.multi.map(escapeHtml).join(", ")}`;
+      }
+      return `${i+1}. ${escapeHtml(step.prompt)}`;
+    })
+    .join("<br>");
+} else if (x.answers && Object.keys(x.answers).length) {
+  answersSummary = escapeHtml(JSON.stringify(x.answers, null, 2));
+}
+
+
 
   const year  = x.identity?.year  || x.vehicle?.year  || "—";
   const make  = x.identity?.make  || x.vehicle?.make  || "";
@@ -669,13 +708,14 @@ function viewIntake(idx){
 
 
 // ==============================
-// Your TREES (unchanged)
+//             TREES 
 // ==============================
 
 // Define your intake trees here. Easy to expand without touching app.js.
 // You can add more topics by following the same structure.
 
 window.TREES = {
+  // === Overheating (original + Other) ===
   overheating: {
     title: "Overheating",
     entry: "q1",
@@ -686,7 +726,8 @@ window.TREES = {
         options: [
           { label: "Today / sudden", next: "q2" },
           { label: "Last few days",  next: "q2" },
-          { label: "Weeks or longer",next: "q2" }
+          { label: "Weeks or longer",next: "q2" },
+          { label: "Other (describe)", next: "q_other" }
         ]
       },
       q2: {
@@ -725,6 +766,23 @@ window.TREES = {
         ],
         next: "o_summary"
       },
+
+      // free-text branch
+      q_other: {
+        type: "input",
+        prompt: "Describe the overheating issue in your own words:",
+        placeholder: "What exactly happens, when, and any patterns?",
+        saveAs: "overheating_other",
+        next: "o_other_overheating"
+      },
+      o_other_overheating: {
+        type: "outcome",
+        title: "Custom overheating description captured",
+        notes: ["Notes stored under 'overheating_other'."],
+        priority: "Low"
+      },
+
+      // outcomes (original)
       o_fan: {
         type: "outcome",
         title: "Cooling fan inoperative suspected",
@@ -752,6 +810,7 @@ window.TREES = {
     }
   },
 
+  // === Brakes (original + Other) ===
   brakes: {
     title: "Brakes (noise/performance)",
     entry: "b1",
@@ -763,7 +822,8 @@ window.TREES = {
           { label: "Squeal/squeak",            next: "b2" },
           { label: "Grinding",                 next: "o_grind" },
           { label: "Vibration/pulsation",      next: "o_rotors" },
-          { label: "Soft or sinking pedal",    next: "o_hydraulic" }
+          { label: "Soft or sinking pedal",    next: "o_hydraulic" },
+          { label: "Other (describe)",         next: "b_other" }
         ]
       },
       b2: {
@@ -774,6 +834,23 @@ window.TREES = {
           { label: "No",  next: "o_inspect" }
         ]
       },
+
+      // free-text branch
+      b_other: {
+        type: "input",
+        prompt: "Describe the brake issue in your own words:",
+        placeholder: "Noise, when it happens, any patterns, warning lights…",
+        saveAs: "brakes_other",
+        next: "o_other_brakes"
+      },
+      o_other_brakes: {
+        type: "outcome",
+        title: "Custom brake description captured",
+        notes: ["Notes stored under 'brakes_other'."],
+        priority: "Low"
+      },
+
+      // outcomes (original)
       o_glaze: {
         type: "outcome",
         title: "Pad glaze or light hardware noise suspected",
@@ -805,8 +882,450 @@ window.TREES = {
         priority: "Critical"
       }
     }
+  },
+
+  // === No Start ===
+  no_start: {
+    title: "No Start",
+    entry: "q1",
+    nodes: {
+      q1: {
+        type: "single",
+        prompt: "When you try to start, what happens?",
+        options: [
+          { label: "Cranks strongly but doesn't start", next: "q2_cranks" },
+          { label: "Cranks slowly / clicking", next: "o_batt_weak" },
+          { label: "Single click, no crank", next: "o_starter" },
+          { label: "No lights / totally dead", next: "o_no_power" },
+          { label: "Other (describe)", next: "q_other" }
+        ]
+      },
+      q2_cranks: {
+        type: "single",
+        prompt: "Does it start then stall within a few seconds?",
+        options: [
+          { label: "Yes, starts then stalls", next: "q3_imm_fuel" },
+          { label: "No, never fires at all", next: "q3_spark_fuel" }
+        ]
+      },
+      q3_imm_fuel: {
+        type: "single",
+        prompt: "Any security/immobilizer light flashing?",
+        options: [
+          { label: "Yes / unsure", next: "o_immobilizer" },
+          { label: "No", next: "o_fuel_pump" }
+        ]
+      },
+      q3_spark_fuel: {
+        type: "single",
+        prompt: "Check Engine Light on while cranking?",
+        options: [
+          { label: "Yes / steady", next: "o_scan_codes" },
+          { label: "No / unknown", next: "o_basic_diag" }
+        ]
+      },
+
+      // free-text
+      q_other: {
+        type: "input",
+        prompt: "Describe the no-start behavior:",
+        placeholder: "What do you hear/see? Any recent work?",
+        saveAs: "no_start_other",
+        next: "o_other_no_start"
+      },
+      o_other_no_start: {
+        type: "outcome",
+        title: "Custom no-start description captured",
+        notes: ["Notes stored under 'no_start_other'."],
+        priority: "Low"
+      },
+
+      // outcomes
+      o_batt_weak: {
+        type: "outcome",
+        title: "Weak battery or poor connections suspected",
+        notes: [
+          "Slow crank/clicking.",
+          "Load-test battery; clean terminals/grounds; check alternator output after start."
+        ],
+        priority: "High"
+      },
+      o_starter: {
+        type: "outcome",
+        title: "Starter/solenoid fault suspected",
+        notes: [
+          "Single click, no crank.",
+          "Verify battery first; check start relay & voltage drop; likely starter replacement."
+        ],
+        priority: "High"
+      },
+      o_no_power: {
+        type: "outcome",
+        title: "No primary power",
+        notes: [
+          "No lights, totally dead.",
+          "Test battery; inspect main fuses/fusible links & grounds; check aftermarket kill switches."
+        ],
+        priority: "High"
+      },
+      o_immobilizer: {
+        type: "outcome",
+        title: "Security/immobilizer preventing run",
+        notes: [
+          "Starts then stalls with security indicator.",
+          "Try other key/fob; check key battery; perform relearn; scan BCM/immobilizer."
+        ],
+        priority: "Moderate"
+      },
+      o_fuel_pump: {
+        type: "outcome",
+        title: "Fuel delivery issue suspected",
+        notes: [
+          "Starts then stalls without security indicator.",
+          "Listen for prime; check rail pressure; inspect pump fuse/relay & grounds."
+        ],
+        priority: "High"
+      },
+      o_scan_codes: {
+        type: "outcome",
+        title: "Scan codes to direct diagnosis",
+        notes: [
+          "CEL on while cranking.",
+          "Check crank/cam sensors, coils, MAF unplugged, etc.; capture freeze frame."
+        ],
+        priority: "Moderate"
+      },
+      o_basic_diag: {
+        type: "outcome",
+        title: "Base checks: spark, fuel, compression",
+        notes: [
+          "No CEL info.",
+          "Perform spark test, injector pulse (noid/scan), compression/relative compression."
+        ],
+        priority: "Moderate"
+      }
+    }
+  },
+
+  // === Check Engine Light ===
+  check_engine_light: {
+    title: "Check Engine Light",
+    entry: "q1",
+    nodes: {
+      q1: {
+        type: "single",
+        prompt: "Is the light steady or flashing?",
+        options: [
+          { label: "Steady", next: "q2_steady" },
+          { label: "Flashing", next: "o_misfire_severe" },
+          { label: "Comes and goes", next: "q2_intermit" },
+          { label: "Other (describe)", next: "q_other" }
+        ]
+      },
+      q2_steady: {
+        type: "single",
+        prompt: "Any noticeable driveability issues?",
+        options: [
+          { label: "None / mild", next: "o_scan_priority" },
+          { label: "Rough idle / low power", next: "o_scan_priority" },
+          { label: "Poor fuel economy", next: "o_scan_priority" }
+        ]
+      },
+      q2_intermit: {
+        type: "single",
+        prompt: "Correlate with wet weather or after refueling?",
+        options: [
+          { label: "After refuel", next: "o_evap_cap" },
+          { label: "Wet weather / humidity", next: "o_ignition_moisture" },
+          { label: "No clear pattern", next: "o_scan_priority" }
+        ]
+      },
+
+      q_other: {
+        type: "input",
+        prompt: "Describe the CEL issue:",
+        placeholder: "When it comes on, behavior changes, recent work…",
+        saveAs: "cel_other",
+        next: "o_other_cel"
+      },
+      o_other_cel: {
+        type: "outcome",
+        title: "Custom CEL description captured",
+        notes: ["Notes stored under 'cel_other'."],
+        priority: "Low"
+      },
+
+      o_misfire_severe: {
+        type: "outcome",
+        title: "Active misfire (flashing CEL)",
+        notes: [
+          "Risk of catalyst damage.",
+          "Avoid heavy load; check coil/plug/injector on affected cylinder(s) and scan now."
+        ],
+        priority: "Critical"
+      },
+      o_scan_priority: {
+        type: "outcome",
+        title: "Scan for codes to route diagnosis",
+        notes: [
+          "Common: O2/AFR sensors, EVAP small leak, MAF contamination, thermostat performance.",
+          "Capture freeze frame; verify basics."
+        ],
+        priority: "Moderate"
+      },
+      o_evap_cap: {
+        type: "outcome",
+        title: "Possible EVAP issue after refueling",
+        notes: [
+          "Loose/damaged cap or vent/purge fault.",
+          "Verify cap seal/clicks; inspect purge/vent valves if recurring."
+        ],
+        priority: "Low"
+      },
+      o_ignition_moisture: {
+        type: "outcome",
+        title: "Moisture-related ignition fault",
+        notes: [
+          "Coils/boots/wires may arc under humidity.",
+          "Inspect for carbon tracking; check cowl leaks."
+        ],
+        priority: "Moderate"
+      }
+    }
+  },
+
+  // === Battery / Charging ===
+  battery_charging: {
+    title: "Battery / Charging",
+    entry: "q1",
+    nodes: {
+      q1: {
+        type: "single",
+        prompt: "Main symptom?",
+        options: [
+          { label: "Battery dies overnight", next: "o_parasitic" },
+          { label: "Battery dies while driving", next: "o_no_charge" },
+          { label: "Charging light on / low voltage", next: "o_alt_drive" },
+          { label: "Other (describe)", next: "q_other" }
+        ]
+      },
+
+      q_other: {
+        type: "input",
+        prompt: "Describe the battery/charging issue:",
+        placeholder: "When it dies, lights on cluster, recent battery/alt work…",
+        saveAs: "battery_other",
+        next: "o_other_batt"
+      },
+      o_other_batt: {
+        type: "outcome",
+        title: "Custom battery/charging description captured",
+        notes: ["Notes stored under 'battery_other'."],
+        priority: "Low"
+      },
+
+      o_parasitic: {
+        type: "outcome",
+        title: "Parasitic draw suspected",
+        notes: [
+          "Measure key-off current; pull fuses to isolate.",
+          "Common: glovebox/trunk lights, infotainment, telematics."
+        ],
+        priority: "Moderate"
+      },
+      o_no_charge: {
+        type: "outcome",
+        title: "Alternator not charging",
+        notes: [
+          "Check belt/tensioner, alternator output, sense wire, grounds.",
+          "Confirm voltage and loads."
+        ],
+        priority: "High"
+      },
+      o_alt_drive: {
+        type: "outcome",
+        title: "Charging system fault",
+        notes: [
+          "Verify 13.5–14.8V typical; test under load.",
+          "If LIN-controlled, scan for alternator/PCM codes."
+        ],
+        priority: "Moderate"
+      }
+    }
+  },
+
+  // === A/C Not Cooling ===
+  ac_not_cooling: {
+    title: "A/C Not Cooling",
+    entry: "q1",
+    nodes: {
+      q1: {
+        type: "single",
+        prompt: "What best describes the issue?",
+        options: [
+          { label: "Warm air all the time", next: "q2_warm" },
+          { label: "Cold at speed, warm at idle", next: "o_condenser_airflow" },
+          { label: "Intermittent cold/warm", next: "q2_intermit" },
+          { label: "Other (describe)", next: "q_other" }
+        ]
+      },
+      q2_warm: {
+        type: "single",
+        prompt: "Does the compressor clutch engage?",
+        options: [
+          { label: "No / unsure", next: "o_low_charge_or_elec" },
+          { label: "Yes, but still warm", next: "o_expansion_or_charge" }
+        ]
+      },
+      q2_intermit: {
+        type: "single",
+        prompt: "Does it cut out over bumps or randomly?",
+        options: [
+          { label: "Yes, over bumps", next: "o_ac_relay_wiring" },
+          { label: "Randomly / cycles a lot", next: "o_icing_or_low_charge" }
+        ]
+      },
+
+      q_other: {
+        type: "input",
+        prompt: "Describe the A/C issue:",
+        placeholder: "When it blows warm, noises, recent service, pressures if known…",
+        saveAs: "ac_other",
+        next: "o_other_ac"
+      },
+      o_other_ac: {
+        type: "outcome",
+        title: "Custom A/C description captured",
+        notes: ["Notes stored under 'ac_other'."],
+        priority: "Low"
+      },
+
+      o_condenser_airflow: {
+        type: "outcome",
+        title: "Condenser airflow/fan issue suspected",
+        notes: [
+          "Cold only at speed implies airflow.",
+          "Check condenser fins/debris; verify radiator/condenser fan operation."
+        ],
+        priority: "Moderate"
+      },
+      o_low_charge_or_elec: {
+        type: "outcome",
+        title: "Low refrigerant or electrical inhibit",
+        notes: [
+          "No clutch = pressure/relay/sensor inhibition likely.",
+          "Check static/operating pressures; verify clutch relay & pressure switch."
+        ],
+        priority: "Moderate"
+      },
+      o_expansion_or_charge: {
+        type: "outcome",
+        title: "Expansion valve/orifice or charge issue",
+        notes: [
+          "Clutch on but warm.",
+          "Compare high/low pressures, look for frosting; weigh in correct charge."
+        ],
+        priority: "Moderate"
+      },
+      o_ac_relay_wiring: {
+        type: "outcome",
+        title: "Relay/wiring or clutch gap sensitive to vibration",
+        notes: [
+          "Cuts out over bumps.",
+          "Inspect relay/connector; measure clutch coil current and air gap."
+        ],
+        priority: "Low"
+      },
+      o_icing_or_low_charge: {
+        type: "outcome",
+        title: "System icing or low charge",
+        notes: [
+          "Random cycling.",
+          "Check evap temp sensor, cabin filter/airflow, and charge level."
+        ],
+        priority: "Moderate"
+      }
+    }
+  },
+
+  // === Vibration / Shimmy ===
+  vibration: {
+    title: "Vibration / Shimmy",
+    entry: "q1",
+    nodes: {
+      q1: {
+        type: "single",
+        prompt: "When is the vibration most noticeable?",
+        options: [
+          { label: "At highway speeds", next: "q2_highway" },
+          { label: "Under braking", next: "o_rotor_runout" },
+          { label: "On acceleration only", next: "o_axle_mounts" },
+          { label: "Other (describe)", next: "q_other" }
+        ]
+      },
+      q2_highway: {
+        type: "single",
+        prompt: "Does it change with lane changes (sweeping left/right)?",
+        options: [
+          { label: "Yes, changes with load shift", next: "o_wheel_bearing_balance" },
+          { label: "No, constant", next: "o_tire_balance_cupping" }
+        ]
+      },
+
+      q_other: {
+        type: "input",
+        prompt: "Describe the vibration:",
+        placeholder: "Speed, steering wheel/body feel, road surface, recent tire work…",
+        saveAs: "vibration_other",
+        next: "o_other_vibration"
+      },
+      o_other_vibration: {
+        type: "outcome",
+        title: "Custom vibration description captured",
+        notes: ["Notes stored under 'vibration_other'."],
+        priority: "Low"
+      },
+
+      o_rotor_runout: {
+        type: "outcome",
+        title: "Brake rotor runout/thickness variation",
+        notes: [
+          "Pulsation under braking.",
+          "Measure hub/rotor runout; service rotors; torque pattern matters."
+        ],
+        priority: "Moderate"
+      },
+      o_axle_mounts: {
+        type: "outcome",
+        title: "Inner CV or engine/trans mount issue",
+        notes: [
+          "Acceleration-only vibration.",
+          "Inspect inner CV play/grease; check mount tears/collapse."
+        ],
+        priority: "Moderate"
+      },
+      o_wheel_bearing_balance: {
+        type: "outcome",
+        title: "Wheel bearing or balance issue",
+        notes: [
+          "Changes with load shift during sweep.",
+          "Check bearing play/noise; road-force balance tires."
+        ],
+        priority: "Moderate"
+      },
+      o_tire_balance_cupping: {
+        type: "outcome",
+        title: "Tire balance/cupping",
+        notes: [
+          "Constant highway vibration.",
+          "Inspect tread wear; rotate/road-force balance; check shocks/struts."
+        ],
+        priority: "Low"
+      }
+    }
   }
 };
+
 
 // ---------- Utilities ----------
 const $ = (sel) => document.querySelector(sel);
@@ -823,7 +1342,6 @@ function escapeHtml(v){
 
 function fmtDateTime(ts) { return new Date(ts).toLocaleString(); }
 
-// ---------- App State ----------
 // ---------- App State ----------
 const state = {
   isStaff: false,   // tracks if staff is logged in
@@ -935,6 +1453,35 @@ function renderQuestion(nodeId){
   const tree = TREES[state.activeTreeKey];
   const node = tree.nodes[nodeId];
 
+    // NEW: free-text input node
+  if (node.type === "input") {
+    const progress = progressPct();
+    view.innerHTML = `
+      <div class="row">
+        <div class="progress"><div class="bar" style="width:${progress}%"></div></div>
+      </div>
+
+      <div class="card">
+        <div class="muted">Topic</div>
+        <h3 style="margin:6px 0 12px">${escapeHtml(tree.title)}</h3>
+
+        <div class="row">
+          <div class="muted">Question</div>
+          <h2 style="margin:6px 0 10px">${escapeHtml(node.prompt || "Describe the issue:")}</h2>
+          <textarea id="freeText" rows="3" placeholder="${escapeHtml(node.placeholder || "Type here…")}"></textarea>
+
+          <div class="actions">
+            <button class="btn secondary" onclick="goBack()">Back</button>
+            <button class="btn primary" onclick="answerInput('${nodeId}')">Save & Continue</button>
+            <button class="btn ghost" onclick="cancelIntake()">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+
   const progress = progressPct();
   const optionsHtml = (node.options || []).map((opt,i) => {
   if (node.type === "single") {
@@ -985,13 +1532,21 @@ function renderOutcome(nodeId){
   // Build answers summary from the live state trail
   // BEFORE
   const answersSummary = state.trail
-  .filter(step => step.type !== "outcome")
-  .map((step, idx) => {
-    if (step.choiceLabel) return `${idx+1}. ${escapeHtml(step.prompt)} — ${escapeHtml(step.choiceLabel)}`;
-    if (step.multi && step.multi.length) return `${idx+1}. ${escapeHtml(step.prompt)} — ${step.multi.map(escapeHtml).join(", ")}`;
-    return `${idx+1}. ${escapeHtml(step.prompt)}`;
-  })
-  .join("<br>");
+    .filter(step => step.type !== "outcome")
+    .map((step, idx) => {
+      if (step.type === "input") {
+        return `${idx+1}. ${escapeHtml(step.prompt)} — ${escapeHtml(step.inputText || "")}`;
+      }
+      if (step.choiceLabel) {
+        return `${idx+1}. ${escapeHtml(step.prompt)} — ${escapeHtml(step.choiceLabel)}`;
+      }
+      if (step.multi && step.multi.length) {
+        return `${idx+1}. ${escapeHtml(step.prompt)} — ${step.multi.map(escapeHtml).join(", ")}`;
+      }
+      return `${idx+1}. ${escapeHtml(step.prompt)}`;
+    })
+    .join("<br>");
+
 
 
   view.innerHTML = `
