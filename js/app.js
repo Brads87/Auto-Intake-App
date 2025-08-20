@@ -658,6 +658,17 @@ if (Array.isArray(x.trail) && x.trail.length) {
     ? new Date(x.visit.startTime).toLocaleString()
     : (x.when ? new Date(x.when).toLocaleString() : "—");
 
+    const topicKey   = (x.visit && x.visit.topic) || x.topic;
+const outcomeId  = x.visit?.outcomeId || x.outcomeId;
+const outcomeNode = window.TREES?.[topicKey]?.nodes?.[outcomeId] || {};
+
+// Staff-only tech notes:
+// Prefer outcomeNode.tech; fall back to .notes for backward compatibility.
+const techNotes = Array.isArray(outcomeNode.tech)
+  ? outcomeNode.tech
+  : (Array.isArray(outcomeNode.notes) ? outcomeNode.notes : []);
+
+
   document.querySelector("#view").innerHTML = `
     <div class="card">
       <div class="muted">Outcome</div>
@@ -693,6 +704,12 @@ if (Array.isArray(x.trail) && x.trail.length) {
             ${kv("Plate", x.identity?.plate || x.vehicle?.plate || "—")}
             ${kv("Created", created)}
           </div>
+          <div class="row"></div>
+          <div class="muted">Tech notes (staff only)</div>
+          <div class="card" style="margin-top:6px">
+            ${techNotes.map(n => `• ${escapeHtml(n)}`).join("<br>") || "—"}
+        </div>
+
         </div>
       </div>
 
@@ -1582,10 +1599,11 @@ function renderOutcome(nodeId){
           </div>
 
           <div class="row"></div>
-          <div class="muted">Tech notes (auto from app)</div>
+          <div class="muted">Driving risk</div>
           <div class="card" style="margin-top:6px">
-            ${(node.notes||[]).map(n=>`• ${escapeHtml(n)}`).join("<br>") || "—"}
+            ${(node.risk || []).map(n => `• ${escapeHtml(n)}`).join("<br>") || "—"}
           </div>
+
         </div>
       </div>
 
