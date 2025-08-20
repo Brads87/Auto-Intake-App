@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <!-- PWA bits -->
-  <link rel="manifest" href="manifest.webmanifest?v=1.9.2">
+  <link rel="manifest" href="manifest.webmanifest?v=1.9.4">
   <meta name="theme-color" content="#0f172a">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
 
   <title>Auto Service Intake</title>
 
   <!-- CSS -->
-  <link rel="stylesheet" href="styles/style.css?v=1.9.3" />
+  <link rel="stylesheet" href="styles/style.css?v=1.9.4" />
 
   <!-- CSP: allow self + a single hashed inline block for SW registration -->
   <meta http-equiv="Content-Security-Policy"
@@ -79,14 +79,28 @@
   <!-- Exact-inline SW registration allowed by the CSP hash above -->
   <script>
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js');
+  // Clean up any old registrations that aren’t our current script URL
+  const SW_URL = 'sw.js?v=1.9.4';
+  window.addEventListener('load', async () => {
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const r of regs) {
+        if (!r.active || !r.active.scriptURL.endsWith(SW_URL)) {
+          // Don’t keep mismatched SWs around (e.g., sw.js?v=1.9.1)
+          try { await r.unregister(); } catch {}
+        }
+      }
+      await navigator.serviceWorker.register(SW_URL, { updateViaCache: 'none' });
+    } catch (e) {
+      // ignore
+    }
   });
 }
-  </script>
+</script>
+
 
   <!-- JS (external; defer keeps CSP happy and preserves order) -->
-  <script src="js/boot.js?v=1.9.3" defer></script>
-  <script src="js/app.js?v=1.9.3" defer></script>
+  <script src="js/boot.js?v=1.9.4" defer></script>
+  <script src="js/app.js?v=1.9.4" defer></script>
 </body>
 </html>
