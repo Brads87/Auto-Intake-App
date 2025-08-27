@@ -1598,11 +1598,16 @@ function renderOutcome(nodeId){
             ${kv("Created", fmtDateTime(state.visit.startTime))}
           </div>
 
-          <div class="row"></div>
-          <div class="muted">Driving risk</div>
-          <div class="card" style="margin-top:6px">
-            ${(node.risk || []).map(n => `• ${escapeHtml(n)}`).join("<br>") || "—"}
-          </div>
+          <div class="muted">Tech notes</div>
+        <div class="card" style="margin-top:6px; line-height:1.6">
+            ${kv("Severity", node.priority || "—")}
+        <div class="muted" style="margin-top:6px">Driving risk</div>
+       <div>${
+              (Array.isArray(node.risk) && node.risk.length ? node.risk : riskCopyFromPriority(node.priority))
+              .map(n => `• ${escapeHtml(n)}`).join("<br>") || "—"
+          }</div>
+        </div>
+
 
         </div>
       </div>
@@ -1622,6 +1627,15 @@ function renderOutcome(nodeId){
   `;
 }
 
+
+function riskCopyFromPriority(priority){
+  const p = String(priority || "").toLowerCase();
+  if (p === "critical") return ["Do not drive; could cause damage or leave you stranded."];
+  if (p === "high")     return ["Minimize driving; schedule repair immediately."]; 
+  if (p === "moderate") return ["Drive cautiously; schedule service soon."];
+  if (p === "low")      return ["Generally safe short-term; monitor symptoms."];
+  return [];
+}
 
 function kv(k, v){
   return `<div class="kv">
