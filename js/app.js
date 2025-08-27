@@ -647,6 +647,7 @@ if (Array.isArray(x.trail) && x.trail.length) {
     const topicKey   = (x.visit && x.visit.topic) || x.topic;
 const outcomeId  = x.visit?.outcomeId || x.outcomeId;
 const outcomeNode = window.TREES?.[topicKey]?.nodes?.[outcomeId] || {};
+const priority = x.priority || outcomeNode.priority || "—";
 
 // Staff-only tech notes:
 // Prefer outcomeNode.tech; fall back to .notes for backward compatibility.
@@ -662,7 +663,8 @@ const techNotes = Array.isArray(outcomeNode.tech)
         ${escapeHtml(x.outcomeTitle || "Intake Summary")} ${x.ro ? `(RO: ${escapeHtml(x.ro)})` : ""}
       </h2>
 
-      <div class="row"><span class="tag">Priority: ${escapeHtml(x.priority || "—")}</span></div>
+      <div class="row"><span class="tag">Priority: ${escapeHtml(priority)}</span></div>
+
 
       <div class="two-col">
         <div>
@@ -1768,11 +1770,15 @@ async function saveSubmission(finalOutcomeId){
 
 function buildSubmissionPayload(id, finalOutcomeId){
   const tree = TREES[state.activeTreeKey] || {};
-  const outcomeTitle = finalOutcomeId ? (tree.nodes?.[finalOutcomeId]?.title || "—") : "—";
+  const node = finalOutcomeId ? (tree.nodes?.[finalOutcomeId] || {}) : {};
+  const outcomeTitle = node.title || "—";
+  const priority = node.priority || "—";
+
   return {
     id,
+    priority, // <-- add this
     identity: structuredClone(state.identity),
-    visit: {...state.visit, endTime: Date.now(), topic: state.activeTreeKey, outcomeId: finalOutcomeId || null},
+    visit: { ...state.visit, endTime: Date.now(), topic: state.activeTreeKey, outcomeId: finalOutcomeId || null },
     trail: structuredClone(state.trail),
     answers: structuredClone(state.answers),
     outcomeTitle
