@@ -1326,7 +1326,28 @@ window.TREES = {
           "Inspect tread wear; rotate/road-force balance; check shocks/struts."
         ],
         priority: "Low"
+      },
+        other: {
+    title: "Other",
+    entry: "q1",
+    nodes: {
+      q1: {
+        type: "input",
+        prompt: "Describe the issue in your own words:",
+        placeholder: "What exactly happens, when, and any patterns?",
+        saveAs: "other_free",
+        next: "o_other_summary"
+      },
+      o_other_summary: {
+        type: "outcome",
+        title: "Custom concern captured",
+        // no tech notes here—customer flow shows only severity + driving risk
+        // leaving risk undefined will auto-fill from priority via riskCopyFromPriority
+        priority: "Low",
+        notes: ["Notes stored under 'other_free'."]
       }
+    }
+  }
     }
   }
 };
