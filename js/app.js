@@ -533,84 +533,70 @@ async function renderStaffView(){
   }
 
   try{
-    const data = await loadDecryptedHistory();
+    await loadDecryptedHistory();
 
-    // Newest first
-    data.sort((a, b) =>
+    // Sort backing array so row indexes match viewIntake(idx)
+    _historyCache.sort((a, b) =>
       new Date(b.visit?.startTime || b.when) - new Date(a.visit?.startTime || a.when)
     );
+    const data = _historyCache;
 
-   const rows = data.map((x, i) => `
-  <tr>
-    <td>${i + 1}</td>
-    <td>${escapeHtml(x.ro || "—")}</td>
-    <td>
-      ${escapeHtml(x.identity?.year || x.vehicle?.year || "—")}
-      ${escapeHtml(x.identity?.make || x.vehicle?.make || "")}
-      ${escapeHtml(x.identity?.model || x.vehicle?.model || "")}
-    </td>
-    <td>${escapeHtml(
-  window.TREES?.[ (x.visit && x.visit.topic) || x.topic ]?.title
-  || (x.visit && x.visit.topic)
-  || x.topic
-  || "—"
-)}</td>
+    const rows = data.map((x, i) => {
+      const year  = x.identity?.year  || x.vehicle?.year  || "—";
+      const make  = x.identity?.make  || x.vehicle?.make  || "";
+      const model = x.identity?.model || x.vehicle?.model || "";
+      const topicKey   = (x.visit && x.visit.topic) || x.topic;
+      const outcomeId  = x.visit?.outcomeId || x.outcomeId;
+      const outcome    = window.TREES?.[topicKey]?.nodes?.[outcomeId] || {};
+      const priority   = x.priority || outcome.priority || "—";
+      const topicTitle = window.TREES?.[topicKey]?.title || topicKey || "—";
+      const time       = new Date(x.visit?.startTime || x.when).toLocaleString();
 
-    <td>${new Date(x.visit?.startTime || x.when).toLocaleString()}</td>
-    <td><button class="btn" onclick='viewIntake(${i})'>Open</button></td>
-  </tr>
-    `).join("");
-
+      return `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${escapeHtml(x.ro || "—")}</td>
+          <td>${escapeHtml(year)} ${escapeHtml(make)} ${escapeHtml(model)}</td>
+          <td>${escapeHtml(topicTitle)}</td>
+          <td>${escapeHtml(priority)}</td>
+          <td>${time}</td>
+          <td><button class="btn" onclick='viewIntake(${i})'>Open</button></td>
+        </tr>`;
+    }).join("");
 
     const table = data.length
       ? `<table class="table">
            <thead>
-             <tr><th>#</th><th>RO</th><th>Vehicle</th><th>Topic</th><th>Time</th><th></th></tr>
+             <tr><th>#</th><th>RO</th><th>Vehicle</th><th>Topic</th><th>Priority</th><th>Time</th><th></th></tr>
            </thead>
            <tbody>${rows}</tbody>
          </table>`
       : "<div class='muted'>No intakes saved on this device yet.</div>";
 
-    const submissionsHtml = `
+    const recoveryHtml = `
       <div class="divider"></div>
       <div class="card">
-        <div class="muted">Saved Intakes (manual saves, this device)</div>
-        <h3 style="margin:6px 0 12px">Submissions</h3>
-        <div id="subs">${renderSubmissionsList()}</div>
-        <div class="muted" style="margin-top:6px">
-          Note: Auto-saved outcomes appear in the table above when staff is unlocked.
+        <div class="muted">Recovery (optional)</div>
+        <h3 style="margin:6px 0 12px">Recovery Code</h3>
+        <div class="flex">
+          <button class="btn" onclick="setRecoveryCodeFlow()">Set / Update Recovery Code</button>
+          <button class="btn secondary" onclick="removeRecoveryCodeFlow()">Remove</button>
         </div>
+        <div class="muted" style="margin-top:6px">
+          If you ever forget the staff passphrase, use the Recovery Code on the unlock screen to regain access and set a new passphrase.
+        </div>
+      </div>`;
+
+    container.innerHTML = `
+      <div class="card">
+        <h2>Staff — Recent Intakes (this device)</h2>
+        ${table}
       </div>
-    `;
-
-
-    const recoveryHtml = `
-  <div class="divider"></div>
-  <div class="card">
-    <div class="muted">Recovery (optional)</div>
-    <h3 style="margin:6px 0 12px">Recovery Code</h3>
-    <div class="flex">
-      <button class="btn" onclick="setRecoveryCodeFlow()">Set / Update Recovery Code</button>
-      <button class="btn secondary" onclick="removeRecoveryCodeFlow()">Remove</button>
-    </div>
-    <div class="muted" style="margin-top:6px">
-      If you ever forget the staff passphrase, use the Recovery Code on the unlock screen to regain access and set a new passphrase.
-    </div>
-  </div>
-`;
-
-container.innerHTML = `
-  <div class="card">
-    <h2>Staff — Recent Intakes (this device)</h2>
-    ${table}
-  </div>
-  ${submissionsHtml}
-  ${recoveryHtml}
-  <div class="actions" style="margin-top:12px">
-    <button class="btn secondary" onclick="exitStaffMode()">Exit</button>
-  </div>`;
-
-  }catch(e){
+      ${recoveryHtml}
+      <div class="actions" style="margin-top:12px">
+        <button class="btn secondary" onclick="exitStaffMode()">Exit</button>
+      </div>`;
+  } catch(e){
     container.innerHTML = `
       <div class="card">
         <h2>Staff — Recent Intakes</h2>
@@ -1386,32 +1372,18 @@ function renderLanding(){
     state.isStaff = false;
     updateStaffUI();
   }
-  
-  // Only render submissions if staff
-  const submissionsSection = state.isStaff ? `
-    <div class="divider"></div>
+
+  view.innerHTML = `
     <div class="card">
-      <div class="muted">Saved Intakes on this device (manual saves)</div>
-      <h3 style="margin:6px 0 12px">Submissions</h3>
-      <div id="subs">${renderSubmissionsList()}</div>
-      <div class="muted" style="margin-top:6px">
-        Note: Staff auto-saved outcomes are under the “Unlock Staff” button.
-
+      <div class="flex" style="justify-content:space-between">
+        <div>
+          <div class="muted">Welcome</div>
+          <h2 style="margin:.2rem 0 0">We Are Here For you!</h2>
+        </div>
       </div>
     </div>
-  ` : "";
 
-view.innerHTML = `
-  <div class="card">
-    <div class="flex" style="justify-content:space-between">
-      <div>
-        <div class="muted">Welcome</div>
-        <h2 style="margin:.2rem 0 0">We Are Here For you!</h2>
-      </div>
-    </div>
-  </div>
-
-  <div class="divider"></div>
+    <div class="divider"></div>
 
     <div class="grid">
       <div class="card">
@@ -1437,8 +1409,6 @@ view.innerHTML = `
         </div>
       </div>
     </div>
-
-    ${submissionsSection}
   `;
 
   // hydrate fields
@@ -1807,51 +1777,6 @@ function buildSubmissionPayload(id, finalOutcomeId){
     answers: structuredClone(state.answers),
     outcomeTitle
   };
-}
-
-function loadAllSubmissions(){
-  // Only manual saves (they have an `id`)
-  return STAFF_UNLOCKED ? (_historyCache || []).filter(x => x && x.id) : [];
-}
-
-function renderSubmissionsList(){
-  const items = loadAllSubmissions();
-  if (!items.length) return `<div class="muted">No submissions yet.</div>`;
-  return `
-    <div class="grid">
-      ${items.map(s => `
-        <div class="card">
-          <div class="flex" style="justify-content:space-between">
-            <div>
-              <div class="muted">${new Date(s.visit?.startTime || s.when).toLocaleString()}</div>
-              <div style="margin-top:6px"><strong>${escapeHtml(s.identity?.name || "Customer")}</strong>
-               — ${escapeHtml(s.identity?.year||"")} ${escapeHtml(s.identity?.make||"")} ${escapeHtml(s.identity?.model||"")}</div>
-              <div class="muted" style="margin-top:4px">${escapeHtml(s.outcomeTitle || "—")}</div>
-            </div>
-            <div class="flex">
-              <button class="btn" onclick='previewSaved(${JSON.stringify(s.id)})'>View</button>
-              <button class="btn danger" onclick='deleteSaved(${JSON.stringify(s.id)})'>Delete</button>
-            </div>
-          </div>
-        </div>
-      `).join("")}
-    </div>`;
-}
-
-function previewSaved(id){
-  const item = (_historyCache || []).find(x => x.id === id);
-  if(!item) return;
-  const w = window.open("", "_blank", "noopener,noreferrer");
-  w.document.write(`<pre style="white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas">${escapeHtml(JSON.stringify(item, null, 2))}</pre>`);
-  w.document.close();
-}
-
-function deleteSaved(id){
-  if(!confirm("Delete this saved intake?")) return;
-  _historyCache = (_historyCache || []).filter(x => x.id !== id);
-  if (STAFF_UNLOCKED) { persistHistory().catch(console.error); }
-  // refresh whichever screen you're on
-  if (STAFF_UNLOCKED) renderStaffView(); else renderLanding();
 }
 
 
