@@ -289,6 +289,81 @@ async function loadDecryptedHistory(){
   _historyCache = await decryptHistory(_cryptoKey);
   return _historyCache;
 }
+function buildPlainTextNotes(finalNode) {
+  // finalNode is the outcome node for risk/priority text
+  const riskLines = (Array.isArray(finalNode?.risk) && finalNode.risk.length
+    ? finalNode.risk
+    : riskCopyFromPriority(finalNode?.priority)).join("; ");
+
+  // Identity / vehicle
+  const id = state.identity || {};
+  const veh = `${id.year || "—"} ${id.make || ""} ${id.model || ""}`.trim() || "—";
+
+  // Structured answers (single line per step)
+  const answers = state.trail
+    .filter(step => step.type !== "outcome")
+    .map((step, i) => {
+      if (step.type === "input") {
+        return `${i+1}. ${step.prompt} — ${step.inputText || ""}`;
+      }
+      if (step.choiceLabel) {
+        return `${i+1}. ${step.prompt} — ${step.choiceLabel}`;
+      }
+      if (step.multi && step.multi.length) {
+        return `${i+1}. ${step.prompt} — ${step.multi.join(", ")}`;
+      }
+      return `${i+1}. ${step.prompt}`;
+    })
+    .join("\r\n");
+
+  const topicTitle = (window.TREES?.[state.activeTreeKey]?.title) || state.activeTreeKey || "—";
+
+  // Keep it compact for LubeSoft notes
+  const lines = [
+    `Intake: ${topicTitle}`,
+    `Priority: ${finalNode?.priority || "—"}; Driving risk: ${riskLines || "—"}`,
+    `Customer: ${id.name || "—"}  Phone: ${id.phone || "—"}  Email: ${id.email || "—"}`,
+    `Vehicle: ${veh}  Mileage: ${id.mileage || "—"}  VIN: ${id.vin || "—"}  Plate: ${id.plate || "—"}`,
+    `Brought in for: ${state.visit?.broughtInFor || "—"}`,
+    `Answers:\r\n${answers || "—"}`
+  ];
+  return lines.join("\r\n");
+}
+
+function copyNotes() {
+  try {
+    const tree = TREES[state.activeTreeKey] || {};
+    const last = state.trail.slice().reverse().find(x => x.type === "outcome");
+    const node = last ? (tree.nodes?.[last.nodeId] || {}) : {};
+    const text = buildPlainTextNotes(node);
+    navigator.clipboard.writeText(text).then(
+      () => alert("Notes copied to clipboard."),
+      () => alert("Copy failed. You can use the .txt export instead.")
+    );
+  } catch (e) {
+    console.error(e);
+    alert("Could not build notes.");
+  }
+}
+
+function exportNotesTxt() {
+  try {
+    const tree = TREES[state.activeTreeKey] || {};
+    const last = state.trail.slice().reverse().find(x => x.type === "outcome");
+    const node = last ? (tree.nodes?.[last.nodeId] || {}) : {};
+    const text = buildPlainTextNotes(node);
+    const blob = new Blob([text], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `intake_notes_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (e) {
+    console.error(e);
+    alert("Export failed.");
+  }
+}
+
 
 async function persistHistory(){
   if(!_cryptoKey) throw new Error("Staff is locked.");
@@ -1634,6 +1709,8 @@ function renderOutcome(nodeId){
         </div>
         <div class="flex">
           <button class="btn" onclick="printSummary()">Print / Save PDF</button>
+          <button class="btn" onclick="copyNotes()">Copy Notes</button>
+          <button class="btn" onclick="exportNotesTxt()">Export Notes (.txt)</button>
           <button class="btn" onclick="exportJSON()">Export JSON</button>
           <button class="btn primary" onclick="saveSubmission('${nodeId}')">Save Intake</button>
         </div>
