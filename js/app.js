@@ -289,80 +289,6 @@ async function loadDecryptedHistory(){
   _historyCache = await decryptHistory(_cryptoKey);
   return _historyCache;
 }
-function buildPlainTextNotes(finalNode) {
-  // finalNode is the outcome node for risk/priority text
-  const riskLines = (Array.isArray(finalNode?.risk) && finalNode.risk.length
-    ? finalNode.risk
-    : riskCopyFromPriority(finalNode?.priority)).join("; ");
-
-  // Identity / vehicle
-  const id = state.identity || {};
-  const veh = `${id.year || "—"} ${id.make || ""} ${id.model || ""}`.trim() || "—";
-
-  // Structured answers (single line per step)
-  const answers = state.trail
-    .filter(step => step.type !== "outcome")
-    .map((step, i) => {
-      if (step.type === "input") {
-        return `${i+1}. ${step.prompt} — ${step.inputText || ""}`;
-      }
-      if (step.choiceLabel) {
-        return `${i+1}. ${step.prompt} — ${step.choiceLabel}`;
-      }
-      if (step.multi && step.multi.length) {
-        return `${i+1}. ${step.prompt} — ${step.multi.join(", ")}`;
-      }
-      return `${i+1}. ${step.prompt}`;
-    })
-    .join("\r\n");
-
-  const topicTitle = (window.TREES?.[state.activeTreeKey]?.title) || state.activeTreeKey || "—";
-
-  // Keep it compact for LubeSoft notes
-  const lines = [
-    `Intake: ${topicTitle}`,
-    `Priority: ${finalNode?.priority || "—"}; Driving risk: ${riskLines || "—"}`,
-    `Customer: ${id.name || "—"}  Phone: ${id.phone || "—"}  Email: ${id.email || "—"}`,
-    `Vehicle: ${veh}  Mileage: ${id.mileage || "—"}  VIN: ${id.vin || "—"}  Plate: ${id.plate || "—"}`,
-    `Brought in for: ${state.visit?.broughtInFor || "—"}`,
-    `Answers:\r\n${answers || "—"}`
-  ];
-  return lines.join("\r\n");
-}
-
-function copyNotes() {
-  try {
-    const tree = TREES[state.activeTreeKey] || {};
-    const last = state.trail.slice().reverse().find(x => x.type === "outcome");
-    const node = last ? (tree.nodes?.[last.nodeId] || {}) : {};
-    const text = buildPlainTextNotes(node);
-    navigator.clipboard.writeText(text).then(
-      () => alert("Notes copied to clipboard."),
-      () => alert("Copy failed. You can use the .txt export instead.")
-    );
-  } catch (e) {
-    console.error(e);
-    alert("Could not build notes.");
-  }
-}
-
-function exportNotesTxt() {
-  try {
-    const tree = TREES[state.activeTreeKey] || {};
-    const last = state.trail.slice().reverse().find(x => x.type === "outcome");
-    const node = last ? (tree.nodes?.[last.nodeId] || {}) : {};
-    const text = buildPlainTextNotes(node);
-    const blob = new Blob([text], { type: "text/plain" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `intake_notes_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  } catch (e) {
-    console.error(e);
-    alert("Export failed.");
-  }
-}
 
 
 async function persistHistory(){
@@ -683,6 +609,77 @@ async function renderStaffView(){
   }
 }
 
+function buildPlainTextNotesForRecord(rec) {
+  const topicKey  = (rec.visit && rec.visit.topic) || rec.topic;
+  const outcomeId = rec.visit?.outcomeId || rec.outcomeId;
+  const tree      = window.TREES?.[topicKey] || {};
+  const outcome   = tree.nodes?.[outcomeId] || {};
+  const priority  = rec.priority || outcome.priority || "—";
+  const riskLines = (Array.isArray(outcome.risk) && outcome.risk.length
+    ? outcome.risk
+    : riskCopyFromPriority(priority)).join("; ");
+
+  const id  = rec.identity || {};
+  const veh = `${id.year || rec.vehicle?.year || "—"} ${id.make || rec.vehicle?.make || ""} ${id.model || rec.vehicle?.model || ""}`.trim() || "—";
+
+  const answers = Array.isArray(rec.trail) ? rec.trail
+    .filter(step => step.type !== "outcome")
+    .map((step, i) => {
+      if (step.type === "input") return `${i+1}. ${step.prompt} — ${step.inputText || ""}`;
+      if (step.choiceLabel) return `${i+1}. ${step.prompt} — ${step.choiceLabel}`;
+      if (step.multi && step.multi.length) return `${i+1}. ${step.prompt} — ${step.multi.join(", ")}`;
+      return `${i+1}. ${step.prompt}`;
+    }).join("\r\n") : "—";
+
+  const topicTitle = tree.title || topicKey || "—";
+  const created = rec.visit?.startTime
+    ? new Date(rec.visit.startTime).toLocaleString()
+    : (rec.when ? new Date(rec.when).toLocaleString() : "—");
+
+  return [
+    `Intake: ${topicTitle}`,
+    `Priority: ${priority}; Driving risk: ${riskLines || "—"}`,
+    `Customer: ${id.name || "—"}  Phone: ${id.phone || "—"}  Email: ${id.email || "—"}`,
+    `Vehicle: ${veh}  Mileage: ${id.mileage || rec.vehicle?.mileage || "—"}  VIN: ${id.vin || rec.vehicle?.vin || "—"}  Plate: ${id.plate || rec.vehicle?.plate || "—"}`,
+    `Created: ${created}`,
+    `Brought in for: ${rec.visit?.broughtInFor || "—"}`,
+    `Answers:\r\n${answers || "—"}`
+  ].join("\r\n");
+}
+
+function copyNotesForIndex(idx) {
+  try {
+    const rec = _historyCache?.[idx];
+    if (!rec) return alert("Not found.");
+    const text = buildPlainTextNotesForRecord(rec);
+    navigator.clipboard.writeText(text).then(
+      () => alert("Notes copied to clipboard."),
+      ()  => alert("Copy failed. Try Export Notes (.txt).")
+    );
+  } catch (e) {
+    console.error(e);
+    alert("Copy failed.");
+  }
+}
+
+function exportNotesTxtForIndex(idx) {
+  try {
+    const rec = _historyCache?.[idx];
+    if (!rec) return alert("Not found.");
+    const text = buildPlainTextNotesForRecord(rec);
+    const blob = new Blob([text], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `intake_notes_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (e) {
+    console.error(e);
+    alert("Export failed.");
+  }
+}
+
+
 
 function viewIntake(idx){
   const x = _historyCache?.[idx];
@@ -776,9 +773,15 @@ const techNotes = Array.isArray(outcomeNode.tech)
         </div>
       </div>
 
-      <div class="actions">
-        <button class="btn" onclick="window.print()">Print</button>
-        <button class="btn secondary" onclick="renderStaffView()">Back</button>
+    <div class="actions" style="justify-content:space-between">
+        <div class="flex">
+          <button class="btn" onclick="window.print()">Print</button>
+          <button class="btn" onclick="copyNotesForIndex(${idx})">Copy Notes</button>
+          <button class="btn" onclick="exportNotesTxtForIndex(${idx})">Export Notes (.txt)</button>
+        </div>
+        <div class="flex">
+          <button class="btn secondary" onclick="renderStaffView()">Back</button>
+        </div>
       </div>
     </div>`;
 }
@@ -1328,125 +1331,105 @@ window.TREES = {
     }
   },
 
-  // === Vibration / Shimmy ===
-  vibration: {
-    title: "Vibration / Shimmy",
-    entry: "q1",
-    nodes: {
-      q1: {
-        type: "single",
-        prompt: "When is the vibration most noticeable?",
-        options: [
-          { label: "At highway speeds", next: "q2_highway" },
-          { label: "Under braking", next: "o_rotor_runout" },
-          { label: "On acceleration only", next: "o_axle_mounts" },
-          { label: "Other (describe)", next: "q_other" }
-        ]
-      },
-      q2_highway: {
-        type: "single",
-        prompt: "Does it change with lane changes (sweeping left/right)?",
-        options: [
-          { label: "Yes, changes with load shift", next: "o_wheel_bearing_balance" },
-          { label: "No, constant", next: "o_tire_balance_cupping" }
-        ]
-      },
+// === Vibration / Shimmy ===
+vibration: {
+  title: "Vibration / Shimmy",
+  entry: "q1",
+  nodes: {
+    q1: {
+      type: "single",
+      prompt: "When is the vibration most noticeable?",
+      options: [
+        { label: "At highway speeds",        next: "q2_highway" },
+        { label: "Under braking",            next: "o_rotor_runout" },
+        { label: "On acceleration only",     next: "o_axle_mounts" },
+        { label: "Other (describe)",         next: "q_other" }
+      ]
+    },
+    q2_highway: {
+      type: "single",
+      prompt: "Does it change with lane changes (sweeping left/right)?",
+      options: [
+        { label: "Yes, changes with load shift", next: "o_wheel_bearing_balance" },
+        { label: "No, constant",                 next: "o_tire_balance_cupping" }
+      ]
+    },
 
-      q_other: {
-        type: "input",
-        prompt: "Describe the vibration:",
-        placeholder: "Speed, steering wheel/body feel, road surface, recent tire work…",
-        saveAs: "vibration_other",
-        next: "o_other_vibration"
-      },
-      o_other_vibration: {
-        type: "outcome",
-        title: "Custom vibration description captured",
-        notes: ["Notes stored under 'vibration_other'."],
-        priority: "Low"
-      },
+    // free-text
+    q_other: {
+      type: "input",
+      prompt: "Describe the vibration:",
+      placeholder: "Speed, steering wheel/body feel, road surface, recent tire work…",
+      saveAs: "vibration_other",
+      next: "o_other_vibration"
+    },
+    o_other_vibration: {
+      type: "outcome",
+      title: "Custom vibration description captured",
+      notes: ["Notes stored under 'vibration_other'."],
+      priority: "Low"
+    },
 
-      o_rotor_runout: {
-        type: "outcome",
-        title: "Brake rotor runout/thickness variation",
-        notes: [
-          "Pulsation under braking.",
-          "Measure hub/rotor runout; service rotors; torque pattern matters."
-        ],
-        priority: "Moderate"
-      },
-      o_axle_mounts: {
-        type: "outcome",
-        title: "Inner CV or engine/trans mount issue",
-        notes: [
-          "Acceleration-only vibration.",
-          "Inspect inner CV play/grease; check mount tears/collapse."
-        ],
-        priority: "Moderate"
-      },
-      o_wheel_bearing_balance: {
-        type: "outcome",
-        title: "Wheel bearing or balance issue",
-        notes: [
-          "Changes with load shift during sweep.",
-          "Check bearing play/noise; road-force balance tires."
-        ],
-        priority: "Moderate"
-      },
-      o_tire_balance_cupping: {
-        type: "outcome",
-        title: "Tire balance/cupping",
-        notes: [
-          "Constant highway vibration.",
-          "Inspect tread wear; rotate/road-force balance; check shocks/struts."
-        ],
-        priority: "Low"
-      },
-        other: {
-    title: "Other",
-    entry: "q1",
-    nodes: {
-      q1: {
-        type: "input",
-        prompt: "Describe the issue in your own words:",
-        placeholder: "What exactly happens, when, and any patterns?",
-        saveAs: "other_free",
-        next: "o_other_summary"
-      },
-      o_other_summary: {
-        type: "outcome",
-        title: "Custom concern captured",
-        // no tech notes here—customer flow shows only severity + driving risk
-        // leaving risk undefined will auto-fill from priority via riskCopyFromPriority
-        priority: "Low",
-        notes: ["Notes stored under 'other_free'."]
-      }
+    // outcomes
+    o_rotor_runout: {
+      type: "outcome",
+      title: "Brake rotor runout/thickness variation",
+      notes: [
+        "Pulsation under braking.",
+        "Measure hub/rotor runout; service rotors; torque pattern matters."
+      ],
+      priority: "Moderate"
+    },
+    o_axle_mounts: {
+      type: "outcome",
+      title: "Inner CV or engine/trans mount issue",
+      notes: [
+        "Acceleration-only vibration.",
+        "Inspect inner CV play/grease; check mount tears/collapse."
+      ],
+      priority: "Moderate"
+    },
+    o_wheel_bearing_balance: {
+      type: "outcome",
+      title: "Wheel bearing or balance issue",
+      notes: [
+        "Changes with load shift during sweep.",
+        "Check bearing play/noise; road-force balance tires."
+      ],
+      priority: "Moderate"
+    },
+    o_tire_balance_cupping: {
+      type: "outcome",
+      title: "Tire balance/cupping",
+      notes: [
+        "Constant highway vibration.",
+        "Inspect tread wear; rotate/road-force balance; check shocks/struts."
+      ],
+      priority: "Low"
     }
   }
-    }
-  }
-    ,
-  // === Other (free-text topic) ===
-  other: {
-    title: "Other",
-    entry: "q1",
-    nodes: {
-      q1: {
-        type: "input",
-        prompt: "Describe the issue in your own words:",
-        placeholder: "What exactly is happening?",
-        saveAs: "other_free",
-        next: "o_other_summary"
-      },
-      o_other_summary: {
-        type: "outcome",
-        title: "Custom concern recorded",
-        priority: "Low",   // auto risk handled elsewhere
-        notes: ["User-entered free text stored under 'other_free'."]
-      }
-    }
-  }
+},
 
+// === Other (free-text topic) ===
+other: {
+  title: "Other",
+  entry: "q1",
+  nodes: {
+    q1: {
+      type: "input",
+      prompt: "Describe the issue in your own words:",
+      placeholder: "What exactly is happening?",
+      saveAs: "other_free",
+      next: "o_other_summary"
+    },
+    o_other_summary: {
+      type: "outcome",
+      title: "Custom concern recorded",
+      priority: "Low",   // auto risk handled elsewhere
+      notes: ["User-entered free text stored under 'other_free'."]
+    }
+  }
+ }
 };
 
 
@@ -1709,8 +1692,6 @@ function renderOutcome(nodeId){
         </div>
         <div class="flex">
           <button class="btn" onclick="printSummary()">Print / Save PDF</button>
-          <button class="btn" onclick="copyNotes()">Copy Notes</button>
-          <button class="btn" onclick="exportNotesTxt()">Export Notes (.txt)</button>
           <button class="btn" onclick="exportJSON()">Export JSON</button>
           <button class="btn primary" onclick="saveSubmission('${nodeId}')">Save Intake</button>
         </div>
