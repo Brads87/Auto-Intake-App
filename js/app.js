@@ -1350,6 +1350,28 @@ window.TREES = {
   }
     }
   }
+    ,
+  // === Other (free-text topic) ===
+  other: {
+    title: "Other",
+    entry: "q1",
+    nodes: {
+      q1: {
+        type: "input",
+        prompt: "Describe the issue in your own words:",
+        placeholder: "What exactly is happening?",
+        saveAs: "other_free",
+        next: "o_other_summary"
+      },
+      o_other_summary: {
+        type: "outcome",
+        title: "Custom concern recorded",
+        priority: "Low",   // auto risk handled elsewhere
+        notes: ["User-entered free text stored under 'other_free'."]
+      }
+    }
+  }
+
 };
 
 
