@@ -1686,16 +1686,15 @@ function renderOutcome(nodeId){
       </div>
 
       <div class="actions" style="justify-content:space-between">
-        <div class="flex">
-          <button class="btn secondary" onclick="goBack()">Back</button>
-          <button class="btn ghost" onclick="cancelIntake()">Cancel</button>
-        </div>
-        <div class="flex">
-          <button class="btn" onclick="printSummary()">Print / Save PDF</button>
-          <button class="btn" onclick="exportJSON()">Export JSON</button>
-          <button class="btn primary" onclick="saveSubmission('${nodeId}')">Save Intake</button>
-        </div>
-      </div>
+  <div class="flex">
+    <button class="btn secondary" onclick="goBack()">Back</button>
+    <button class="btn ghost" onclick="cancelIntake()">Cancel</button>
+  </div>
+  <div class="flex">
+    <button class="btn primary" onclick="saveSubmission('${nodeId}')">Save Intake</button>
+  </div>
+</div>
+
     </div>
   `;
 }
