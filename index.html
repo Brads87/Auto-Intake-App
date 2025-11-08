@@ -14,17 +14,36 @@
   <!-- CSS -->
   <link rel="stylesheet" href="styles/style.css">
 
-  <!-- CSP: allow self + a single hashed inline block for SW registration -->
+  <!-- Print rules: hide chrome/status/buttons on paper -->
+  <style id="print-hide">
+  @media print {
+    /* Hide app chrome and staff controls */
+    header,
+    #staffStatus,
+    #btnStaffUnlock,
+    #btnStaffLock,
+    #toastHost,
+    .actions.no-print,
+    .btn { display: none !important; }
+
+    /* Flatten cards for paper */
+    body  { background: #fff !important; }
+    .card { box-shadow: none !important; border: 0 !important; }
+    .two-col { display: block !important; } /* stack columns in print */
+  }
+  </style>
+
+  <!-- CSP -->
   <meta http-equiv="Content-Security-Policy"
-      content="default-src 'self';
-               script-src 'self' 'unsafe-inline';
-               style-src 'self' 'unsafe-inline';
-               img-src 'self' data:;
-               object-src 'none';
-               base-uri 'self';
-               form-action 'self';
-               frame-ancestors 'self';
-               upgrade-insecure-requests">
+        content="default-src 'self';
+                 script-src 'self' 'unsafe-inline';
+                 style-src 'self' 'unsafe-inline';
+                 img-src 'self' data:;
+                 object-src 'none';
+                 base-uri 'self';
+                 form-action 'self';
+                 frame-ancestors 'self';
+                 upgrade-insecure-requests">
   <meta name="referrer" content="same-origin">
 </head>
 
@@ -33,6 +52,7 @@
     <header>
       <h1>Auto Service Intake</h1>
       <div class="right">
+        <!-- Mode pill + controls (shown on screen, hidden on print via CSS above) -->
         <span id="staffStatus" class="pill">Customer Mode (Locked)</span>
         <button id="btnStaffUnlock" class="btn">Unlock Staff</button>
         <button id="btnStaffLock" class="btn secondary" style="display:none">Lock</button>
@@ -46,13 +66,12 @@
     </main>
   </div>
 
-  <!-- Staff Login / Recovery Modal (single instance) -->
+  <!-- Staff Login / Recovery Modal -->
   <div id="staffLoginModal"
        style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.6);
               align-items:center; justify-content:center;">
     <div class="card" style="width:min(520px, 92%);">
       <h3 style="margin:0 0 8px">Staff Unlock</h3>
-      <!-- This <p> is swapped by JS when switching to Recovery mode -->
       <p class="muted" style="margin:0 0 12px">
         Enter your staff passphrase to unlock saved intakes.
       </p>
@@ -76,11 +95,7 @@
     </div>
   </div>
 
-  <!-- Exact-inline SW registration allowed by the CSP hash above -->
-
-
-
-  <!-- JS (external; defer keeps CSP happy and preserves order) -->
+  <!-- JS (external; defer preserves order and keeps CSP happy) -->
   <script src="js/boot.js" defer></script>
   <script src="js/app.js" defer></script>
 </body>

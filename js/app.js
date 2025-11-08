@@ -739,7 +739,7 @@ async function renderStaffView(){
       <div class="card">
         <h2>Staff — Recent Intakes</h2>
         <div class='muted'>Locked. Click “Unlock Staff” in the header.</div>
-        <div class="actions" style="margin-top:12px">
+        <div class="actions no-print" style="margin-top:12px">
           <button class="btn secondary" onclick="renderLanding()">Back</button>
         </div>
       </div>`;
@@ -807,9 +807,9 @@ async function renderStaffView(){
         ${table}
       </div>
       ${recoveryHtml}
-      <div class="actions" style="margin-top:12px">
-        <button class="btn secondary" onclick="exitStaffMode()">Exit</button>
-      </div>`;
+      <div class="actions no-print" style="margin-top:12px">
+  <button class="btn secondary" onclick="exitStaffMode()">Exit</button>
+    </div>`;
   } catch(e){
     container.innerHTML = `
       <div class="card">
@@ -986,7 +986,7 @@ const techNotes = Array.isArray(outcomeNode.tech)
         </div>
       </div>
 
-    <div class="actions" style="justify-content:space-between">
+    <div class="actions no-print" style="justify-content:space-between">
         <div class="flex">
           <button class="btn" onclick="window.print()">Print</button>
           <button class="btn" onclick="copyNotesForIndex(${idx})">Copy Notes</button>
@@ -1903,7 +1903,8 @@ function renderOutcome(nodeId){
         </div>
       </div>
 
-      <div class="actions" style="justify-content:space-between">
+      <div class="actions no-print" style="justify-content:space-between">
+
   <div class="flex">
     <button class="btn secondary" onclick="goBack()">Back</button>
     <button class="btn ghost" onclick="cancelIntake()">Cancel</button>
