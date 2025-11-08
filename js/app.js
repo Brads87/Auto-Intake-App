@@ -6,7 +6,7 @@
 const ENC_STORAGE_KEY = "intakeHistoryEnc";   // { v, salt, iv, cipher, updatedAt }
 const LOCK_STATE_KEY  = "staffLockState";     // { tries, lockedUntil, backoff }
 const ENC_VERSION     = 1;
-const PBKDF2_ITER     = 250000;
+let PBKDF2_ITER       = 600000; // target for desktops; calibrated at runtime
 const GCM_IV_BYTES    = 12;
 const SALT_BYTES      = 16;
 
@@ -17,6 +17,31 @@ let _recoveryKey    = null;   // memory-only; set after recovery or when you set
 
 const te = new TextEncoder();
 const td = new TextDecoder();
+
+// Calibrate PBKDF2 iterations once per boot (adapts to device speed)
+async function calibratePBKDF2() {
+  try {
+    const cached = sessionStorage.getItem("pbkdf2_iter");
+    if (cached) {
+      PBKDF2_ITER = parseInt(cached, 10) || PBKDF2_ITER;
+      return;
+    }
+    const salt = randomBytes(16);
+    const t0 = performance.now();
+    await deriveKeyFromPass("probe", salt, /*overrideIter*/ 100000);
+    const ms = performance.now() - t0;
+
+    // ~150ms/100k = fast; >450ms = underpowered → lower iterations
+    if (ms > 450) PBKDF2_ITER = 200000;
+    else if (ms > 250) PBKDF2_ITER = 400000;
+    else PBKDF2_ITER = 600000;
+
+    sessionStorage.setItem("pbkdf2_iter", String(PBKDF2_ITER));
+  } catch {
+    // keep default PBKDF2_ITER on error
+  }
+}
+
 
 // ===== Encrypted pending store for locked mode =====
 // When staff is locked, we encrypt intakes with this fallback secret,
@@ -137,16 +162,18 @@ async function migratePendingToHistory(){
 function getLockState(){ try { return JSON.parse(localStorage.getItem(LOCK_STATE_KEY) || "{}"); } catch { return {}; } }
 function setLockState(s){ localStorage.setItem(LOCK_STATE_KEY, JSON.stringify(s || {})); }
 
-async function deriveKeyFromPass(pass, saltBuf){
+async function deriveKeyFromPass(pass, saltBuf, overrideIter) {
+  const iters = overrideIter || PBKDF2_ITER;
   const base = await crypto.subtle.importKey("raw", te.encode(pass), "PBKDF2", false, ["deriveKey"]);
   return crypto.subtle.deriveKey(
-    { name:"PBKDF2", salt: saltBuf, iterations: PBKDF2_ITER, hash:"SHA-256" },
+    { name: "PBKDF2", salt: saltBuf, iterations: iters, hash: "SHA-256" },
     base,
-    { name:"AES-GCM", length:256 },
+    { name: "AES-GCM", length: 256 },
     false,
-    ["encrypt","decrypt"]
+    ["encrypt", "decrypt"]
   );
 }
+
 function getEncStore(){ try { return JSON.parse(localStorage.getItem(ENC_STORAGE_KEY) || "null"); } catch { return null; } }
 function setEncStore(obj){ localStorage.setItem(ENC_STORAGE_KEY, JSON.stringify(obj)); }
 
@@ -1890,4 +1917,6 @@ function buildSubmissionPayload(id, finalOutcomeId){
 function tickClock(){ const el = $("#clock"); if (el) el.textContent = new Date().toLocaleString(); }
 setInterval(tickClock, 1000);
 tickClock();
+calibratePBKDF2();  // runs once; sets PBKDF2_ITER based on device speed
 renderLanding();
+
