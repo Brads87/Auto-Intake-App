@@ -18,6 +18,92 @@ let _recoveryKey    = null;   // memory-only; set after recovery or when you set
 const te = new TextEncoder();
 const td = new TextDecoder();
 
+// --- Tiny toast system (auto-replaces window.alert) ---
+(function initToasts(){
+  // Create container once
+  const host = document.createElement("div");
+  host.id = "toastHost";
+  host.style.position = "fixed";
+  host.style.top = "16px";
+  host.style.right = "16px";
+  host.style.zIndex = "99999";
+  host.style.display = "flex";
+  host.style.flexDirection = "column";
+  host.style.gap = "10px";
+  document.body.appendChild(host);
+
+  // Inject minimal styles that match your palette
+  const css = document.createElement("style");
+  css.textContent = `
+    .toast {
+      background:#0b1020;
+      color: var(--text, #e5e7eb);
+      border:1px solid var(--border, #1f2937);
+      padding:12px 14px;
+      border-radius:12px;
+      box-shadow:0 8px 24px rgba(0,0,0,.35);
+      font-size:14px;
+      max-width: 320px;
+      line-height:1.35;
+      display:flex; align-items:flex-start; gap:10px;
+      opacity:0; transform: translateY(-8px);
+      transition: opacity .15s ease, transform .15s ease;
+    }
+    .toast.show { opacity:1; transform: translateY(0); }
+    .toast .dot { width:10px; height:10px; border-radius:999px; margin-top:4px; flex:0 0 auto; }
+    .toast.info    .dot { background: var(--accent-2, #60a5fa); }
+    .toast.success .dot { background: var(--accent, #22c55e); }
+    .toast.error   .dot { background: var(--danger, #ef4444); }
+  `;
+  document.head.appendChild(css);
+
+  function toast(msg, type="info", ms=2600){
+    const el = document.createElement("div");
+    el.className = `toast ${type}`;
+    el.innerHTML = `<div class="dot"></div><div>${String(msg)}</div>`;
+    host.appendChild(el);
+    // animate in
+    requestAnimationFrame(() => el.classList.add("show"));
+    // remove later
+    const t = setTimeout(() => {
+      el.classList.remove("show");
+      el.addEventListener("transitionend", () => el.remove(), { once:true });
+    }, ms);
+    // allow click-to-dismiss
+    el.addEventListener("click", () => { clearTimeout(t); el.remove(); });
+  }
+
+  // expose helpers
+  window.toast = toast;
+  window.toastSuccess = (m, ms)=>toast(m,"success", ms);
+  window.toastError   = (m, ms)=>toast(m,"error",   ms);
+
+  // Convert all window.alert calls to toasts automatically
+  window.alert = (m)=> toast(String(m), "info");
+})();
+
+
+// === Idle auto-lock (soft lock that clears in-memory keys only) ===
+const INACTIVITY_MS = 10 * 60 * 1000; // 10 minutes
+let _idleTimer = null;
+
+function _armIdleTimer() {
+  clearTimeout(_idleTimer);
+  _idleTimer = setTimeout(() => {
+    if (STAFF_UNLOCKED) {
+      exitStaffMode(); // this already clears keys, updates UI, and returns to landing
+      alert("Locked due to inactivity.");
+    }
+  }, INACTIVITY_MS);
+}
+
+function setupActivityWatchers() {
+  ["click","keydown","pointerdown","touchstart","scroll","visibilitychange"]
+    .forEach(evt => window.addEventListener(evt, _armIdleTimer, { passive: true }));
+  _armIdleTimer();
+}
+
+
 // Calibrate PBKDF2 iterations once per boot (adapts to device speed)
 async function calibratePBKDF2() {
   try {
@@ -63,8 +149,16 @@ async function encryptRecovery(arr, key, saltB64){
   const iv = randomBytes(GCM_IV_BYTES);
   const data = te.encode(JSON.stringify(arr));
   const cipher = await crypto.subtle.encrypt({ name:"AES-GCM", iv }, key, data);
-  setRecStore({ v: ENC_VERSION, salt: saltB64, iv: bufToB64(iv), cipher: bufToB64(cipher), updatedAt: nowMs() });
+  setRecStore({
+    v: ENC_VERSION,
+    iter: PBKDF2_ITER,   // NEW
+    salt: saltB64,
+    iv: bufToB64(iv),
+    cipher: bufToB64(cipher),
+    updatedAt: nowMs()
+  });
 }
+
 async function decryptRecovery(key){
   const store = getRecStore();
   if(!store) return null;
@@ -181,8 +275,16 @@ async function encryptHistory(arr, key, saltB64){
   const iv = randomBytes(GCM_IV_BYTES);
   const data = te.encode(JSON.stringify(arr));
   const cipher = await crypto.subtle.encrypt({ name:"AES-GCM", iv }, key, data);
-  setEncStore({ v: ENC_VERSION, salt: saltB64, iv: bufToB64(iv), cipher: bufToB64(cipher), updatedAt: nowMs() });
+  setEncStore({
+    v: ENC_VERSION,
+    iter: PBKDF2_ITER,   // NEW: remember which iteration count was used
+    salt: saltB64,
+    iv: bufToB64(iv),
+    cipher: bufToB64(cipher),
+    updatedAt: nowMs()
+  });
 }
+
 async function decryptHistory(key){
   const store = getEncStore();
   if(!store) return [];
@@ -190,19 +292,42 @@ async function decryptHistory(key){
   return JSON.parse(td.decode(plain) || "[]");
 }
 async function ensureInitializedForPass(pass){
-  let store = getEncStore();
-  if(store){
-    const key = await deriveKeyFromPass(pass, b64ToBuf(store.salt));
-    const arr = await decryptHistory(key); // throws if wrong pass
-    return { key, arr };
+  const store = getEncStore();
+  if (store) {
+    const saltBuf = b64ToBuf(store.salt);
+
+    // Try in this order: stored iter (if present), current calibrated iter, legacy 250k
+    const tries = [];
+    if (store.iter) tries.push(store.iter);
+    tries.push(PBKDF2_ITER);
+    tries.push(250000);
+    const itersToTry = [...new Set(tries)];
+
+    let lastErr;
+    for (const it of itersToTry) {
+      try {
+        const key = await deriveKeyFromPass(pass, saltBuf, it);
+        const arr = await decryptHistory(key); // throws if wrong
+        // If decrypted under a non-current iteration, rotate to current iter now
+        if (store.iter !== PBKDF2_ITER) {
+          const freshKey = await deriveKeyFromPass(pass, saltBuf, PBKDF2_ITER);
+          await encryptHistory(arr, freshKey, store.salt); // writes iter=PBKDF2_ITER
+          return { key: freshKey, arr };
+        }
+        return { key, arr };
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error("Passphrase incorrect.");
   } else {
+    // First-time setup
     const salt = randomBytes(SALT_BYTES);
     const saltB64 = bufToB64(salt);
-    const key = await deriveKeyFromPass(pass, salt);
-    await encryptHistory([], key, saltB64);
+    const key = await deriveKeyFromPass(pass, salt, PBKDF2_ITER);
+    await encryptHistory([], key, saltB64); // writes iter
     return { key, arr: [] };
   }
 }
+
 
 // --- header + modal UI helpers ---
 function updateStaffUI(){
@@ -226,10 +351,19 @@ function showModal(show){
   m.style.display = show ? "flex" : "none";
   const err = document.getElementById("staffLoginError");
   if(err) err.style.display = "none";
-  if(show){ setTimeout(()=> document.getElementById("staffPassInput")?.focus(), 30); }
-  if (show) setUnlockMode("pass");
-  else { const input = document.getElementById("staffPassInput"); if(input) input.value = ""; }
+  if(show){
+    setTimeout(()=> document.getElementById("staffPassInput")?.focus(), 30);
+    setUnlockMode("pass");
+  } else {
+    const input = document.getElementById("staffPassInput");
+    if(input) input.value = "";
+
+    // ✅ Reset staged recovery/pass change if modal closes
+    window._awaitingNewPass = null;
+    _unlockMode = "pass";
+  }
 }
+
 function modalError(msg){ const err = document.getElementById("staffLoginError"); if(err){ err.textContent = msg; err.style.display = "block"; } }
 
 function checkLockedOut(){ const s = getLockState(); return s.lockedUntil ? nowMs() < s.lockedUntil : false; }
@@ -358,12 +492,25 @@ async function removeRecoveryCodeFlow(){
   alert("Recovery Code removed.");
 }
 
+function _modalHotkeys(e){
+  if (!document.getElementById("staffLoginModal")?.style.display || document.getElementById("staffLoginModal").style.display !== "flex") return;
+  if (e.key === "Enter") {
+    e.preventDefault();
+    document.getElementById("btnStaffSubmit")?.click();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    showModal(false);
+  }
+}
+
+
 
 // wire buttons AFTER DOM (don’t call renderLanding here)
 window.addEventListener("DOMContentLoaded", ()=>{
   // Open/close modal
   document.getElementById("btnStaffUnlock")?.addEventListener("click", ()=> showModal(true));
   document.getElementById("btnStaffCancel")?.addEventListener("click", ()=> showModal(false));
+  window.addEventListener("keydown", _modalHotkeys, { passive:false });
 
   // Toggle between passphrase and recovery modes (moved out of Lock handler)
   document.getElementById("linkRecovery")?.addEventListener("click", (e)=>{ e.preventDefault(); setUnlockMode("recovery"); });
@@ -380,51 +527,88 @@ window.addEventListener("DOMContentLoaded", ()=>{
   });
 
   // Submit (handles both passphrase and recovery flows)
-  document.getElementById("btnStaffSubmit")?.addEventListener("click", async ()=>{
-    if(_unlockMode === "recovery"){
-      // --- Recovery Unlock path ---
-      if(checkLockedOut()) { modalError("Too many attempts. Try again later."); return; }
-      const code = document.getElementById("staffPassInput")?.value || "";
-      if(!code || code.length < 8){ modalError("Recovery Code must be at least 8 characters."); return; }
+document.getElementById("btnStaffSubmit")?.addEventListener("click", async ()=>{
+  // ensure our small staging var exists without adding a top-level let
+  if (typeof window._awaitingNewPass === "undefined") window._awaitingNewPass = null;
 
-      const rec = getRecStore();
-      if(!rec){ modalError("No Recovery Code is set on this device."); return; }
+  // --- Recovery Unlock (stage 1): verify Recovery Code, then ask for NEW pass in the same modal ---
+  if (_unlockMode === "recovery") {
+    if (checkLockedOut()) { modalError("Too many attempts. Try again later."); return; }
+    const code = document.getElementById("staffPassInput")?.value || "";
+    if (!code || code.length < 8) { modalError("Recovery Code must be at least 8 characters."); return; }
 
-      try{
-        const recKey = await deriveKeyFromPass(code, b64ToBuf(rec.salt));
-        const arr = await decryptRecovery(recKey); // throws if wrong code
+    const rec = getRecStore();
+    if (!rec) { modalError("No Recovery Code is set on this device."); return; }
 
-        // Prompt for NEW passphrase
-        let newPass = prompt("Recovery successful. Enter a NEW staff passphrase (min 6 characters):", "");
-        if(!newPass || newPass.length < 6){ modalError("New passphrase must be at least 6 characters."); return; }
+    try {
+      const recKey = await deriveKeyFromPass(code, b64ToBuf(rec.salt), rec.iter || PBKDF2_ITER);
+      const arr = await decryptRecovery(recKey); // throws if wrong code
 
-        const salt = randomBytes(SALT_BYTES);
-        const saltB64 = bufToB64(salt);
-        const key = await deriveKeyFromPass(newPass, salt);
-        _cryptoKey = key;
-        _historyCache = Array.isArray(arr) ? arr : [];
-        STAFF_UNLOCKED = true;
+      // Stage 2: hold verified data and retitle the modal to set NEW passphrase (no prompt())
+      window._awaitingNewPass = { recKey, arr };
+      _unlockMode = "recovery-new";
 
-        await encryptHistory(_historyCache, _cryptoKey, saltB64);
+      const title = document.querySelector("#staffLoginModal h3");
+      const hint  = document.querySelector("#staffLoginModal p");
+      const input = document.getElementById("staffPassInput");
+      if (title) title.textContent = "Set New Staff Passphrase";
+      if (hint)  hint.textContent  = "Recovery successful. Enter a NEW staff passphrase (min 6 characters).";
+      if (input) { input.value = ""; input.placeholder = "New staff passphrase"; input.type = "password"; }
+      const err = document.getElementById("staffLoginError"); if (err) err.style.display = "none";
+      toastSuccess("Recovery verified. Set a new passphrase.");
+    } catch(e) {
+      recordBadAttempt();
+      modalError("Recovery Code incorrect.");
+    }
+    return;
+  }
 
-        // Keep recovery copy in sync now that we have the recKey
-        _recoveryKey = recKey;
-        await persistHistory(); // also refreshes recovery copy if present
-
-        clearLockout();
-        showModal(false);
-        updateStaffUI();
-
-        // Pull in any pending (customer-mode) records
-        await migratePendingToHistory();
-
-        if(typeof renderStaffView === "function") renderStaffView();
-      }catch(e){
-        recordBadAttempt();
-        modalError("Recovery Code incorrect.");
-      }
+  // --- Recovery Unlock (stage 2): user submits NEW passphrase ---
+  if (_unlockMode === "recovery-new") {
+    const input = document.getElementById("staffPassInput");
+    const newPass = input?.value || "";
+    if (!newPass || newPass.length < 6) {
+      modalError("New passphrase must be at least 6 characters.");
       return;
     }
+    if (!window._awaitingNewPass) {
+      modalError("Recovery session expired. Start again.");
+      _unlockMode = "recovery";
+      return;
+    }
+
+    try {
+      const { recKey, arr } = window._awaitingNewPass;
+      const salt = randomBytes(SALT_BYTES);
+      const saltB64 = bufToB64(salt);
+      const key = await deriveKeyFromPass(newPass, salt);
+
+      _cryptoKey = key;
+      _historyCache = Array.isArray(arr) ? arr : [];
+      STAFF_UNLOCKED = true;
+      _armIdleTimer();
+
+      await encryptHistory(_historyCache, _cryptoKey, saltB64);
+
+      // keep recovery copy in sync going forward
+      _recoveryKey = recKey;
+      await persistHistory();
+
+      clearLockout();
+      window._awaitingNewPass = null;
+      showModal(false);
+      updateStaffUI();
+
+      // Pull in any pending (customer-mode) records
+      await migratePendingToHistory();
+
+      if (typeof renderStaffView === "function") renderStaffView();
+      toastSuccess("New passphrase set. Staff unlocked.");
+    } catch (e) {
+      modalError("Failed to set new passphrase. Try again.");
+    }
+    return;
+  }
 
     // --- Normal Staff Unlock path ---
     if(checkLockedOut()) { modalError("Too many attempts. Try again later."); return; }
@@ -436,6 +620,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
       _cryptoKey = key;
       _historyCache = arr;
       STAFF_UNLOCKED = true;
+      _armIdleTimer();
 
       await migratePendingToHistory();
 
@@ -531,6 +716,7 @@ function buildAutoSavedIntake(outcomeId){
 function enterStaffMode(){ showModal(true); }
 
 function exitStaffMode(){
+  clearTimeout(_idleTimer);
   STAFF_UNLOCKED = false;
   _cryptoKey = null;
   _historyCache = [];
@@ -1547,6 +1733,7 @@ function renderLanding(){
   $("#year").value = id.year; $("#make").value = id.make; $("#model").value = id.model;
   $("#mileage").value = id.mileage; $("#vin").value = id.vin; $("#plate").value = id.plate;
   $("#brought").value = state.visit.broughtInFor || "";
+  setTimeout(() => document.getElementById("name")?.focus(), 30);
 }
 
 function renderIdentityForm(){
@@ -1572,31 +1759,35 @@ function renderQuestion(nodeId){
 
     // NEW: free-text input node
   if (node.type === "input") {
-    const progress = progressPct();
-    view.innerHTML = `
+  const progress = progressPct();
+  view.innerHTML = `
+    <div class="row">
+      <div class="progress"><div class="bar" style="width:${progress}%"></div></div>
+    </div>
+
+    <div class="card">
+      <div class="muted">Topic</div>
+      <h3 style="margin:6px 0 12px">${escapeHtml(tree.title)}</h3>
+
       <div class="row">
-        <div class="progress"><div class="bar" style="width:${progress}%"></div></div>
-      </div>
+        <div class="muted">Question</div>
+        <h2 style="margin:6px 0 10px">${escapeHtml(node.prompt || "Describe the issue:")}</h2>
+        <textarea id="freeText" rows="3" placeholder="${escapeHtml(node.placeholder || "Type here…")}"></textarea>
 
-      <div class="card">
-        <div class="muted">Topic</div>
-        <h3 style="margin:6px 0 12px">${escapeHtml(tree.title)}</h3>
-
-        <div class="row">
-          <div class="muted">Question</div>
-          <h2 style="margin:6px 0 10px">${escapeHtml(node.prompt || "Describe the issue:")}</h2>
-          <textarea id="freeText" rows="3" placeholder="${escapeHtml(node.placeholder || "Type here…")}"></textarea>
-
-          <div class="actions">
-            <button class="btn secondary" onclick="goBack()">Back</button>
-            <button class="btn primary" onclick="answerInput('${nodeId}')">Save & Continue</button>
-            <button class="btn ghost" onclick="cancelIntake()">Cancel</button>
-          </div>
+        <div class="actions">
+          <button class="btn secondary" onclick="goBack()">Back</button>
+          <button class="btn primary" onclick="answerInput('${nodeId}')">Save & Continue</button>
+          <button class="btn ghost" onclick="cancelIntake()">Cancel</button>
         </div>
       </div>
-    `;
-    return;
-  }
+    </div>
+  `;
+
+  // focus AFTER the HTML is in the DOM
+  setTimeout(() => document.getElementById("freeText")?.focus(), 30);
+  return;
+}
+
 
 
   const progress = progressPct();
@@ -1917,6 +2108,8 @@ function buildSubmissionPayload(id, finalOutcomeId){
 function tickClock(){ const el = $("#clock"); if (el) el.textContent = new Date().toLocaleString(); }
 setInterval(tickClock, 1000);
 tickClock();
-calibratePBKDF2();  // runs once; sets PBKDF2_ITER based on device speed
+calibratePBKDF2();
+setupActivityWatchers(); // ✅ this starts the inactivity timer
 renderLanding();
+
 
