@@ -25,6 +25,8 @@
     #toastHost,
     .actions.no-print,
     .btn { display: none !important; }
+    #app-version { display:none !important; }
+
 
     /* Flatten cards for paper */
     body  { background: #fff !important; }
@@ -98,5 +100,13 @@
   <!-- JS (external; defer preserves order and keeps CSP happy) -->
   <script src="js/boot.js" defer></script>
   <script src="js/app.js" defer></script>
+  <footer id="app-version"
+        class="no-print"
+        style="position:fixed; right:12px; bottom:8px; 
+               font-size:0.8em; color:#666; text-align:right;
+               background:transparent; padding:0 4px;">
+  Auto Service Intake — Loading version…
+</footer>
+
 </body>
 </html>

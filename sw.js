@@ -5,7 +5,10 @@
 // - Everything else: cache-first (fast + offline)
 // - Bump CACHE_NAME on each deploy
 // -----------------------------
-const CACHE_NAME = "intake-v2.0.2"; // <-- bump this when you deploy
+// Single source of truth for app version
+const APP_VERSION = "v2.0.3";
+const CACHE_NAME = `intake-${APP_VERSION}`;
+
 
 self.addEventListener("install", (event) => {
   // Activate new SW immediately
@@ -100,4 +103,15 @@ self.addEventListener("fetch", (event) => {
       });
     })
   );
+  return; // keep symmetry with the earlier branches
+}); // <-- closes self.addEventListener("fetch", ...)
+
+
+// -----------------------------
+// Version responder (for boot.js)
+// -----------------------------
+self.addEventListener("message", (event) => {
+  if (event.data === "getVersion") {
+    event.source.postMessage({ version: APP_VERSION });
+  }
 });
