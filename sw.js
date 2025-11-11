@@ -6,7 +6,7 @@
 // - Bump CACHE_NAME on each deploy
 // -----------------------------
 // Single source of truth for app version
-const APP_VERSION = "v2.0.3";
+const APP_VERSION = "v2.0.4";
 const CACHE_NAME = `intake-${APP_VERSION}`;
 
 

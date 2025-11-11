@@ -939,6 +939,43 @@ const priority = x.priority || outcomeNode.priority || "—";
 const techNotes = Array.isArray(outcomeNode.tech)
   ? outcomeNode.tech
   : (Array.isArray(outcomeNode.notes) ? outcomeNode.notes : []);
+  // ---- DTC extraction (from saved answers/trail) + lookup ----
+function _extractCelCodesFromRecord(rec) {
+  // primary: answers saved under "cel_code"
+  let raw = rec.answers?.cel_code || "";
+  // fallback: find input step whose prompt mentions "code"
+  if (!raw && Array.isArray(rec.trail)) {
+    const fx = rec.trail.find(t => t.type === "input" && /code/i.test(t.prompt || ""));
+    if (fx && fx.inputText) raw = fx.inputText;
+  }
+  return (window.parseDtcList ? window.parseDtcList(raw) : []);
+}
+
+const dtcList = _extractCelCodesFromRecord(x);
+const dtcEntries = (dtcList.length && window.lookupDtcEntries)
+  ? window.lookupDtcEntries(dtcList)
+  : [];
+
+const dtcHtml = dtcEntries.length
+  ? dtcEntries.map(e => `
+      <div class="card" style="margin-top:8px">
+        <div class="muted">${escapeHtml(e.title || (e.code + " — (no details)"))}</div>
+        <div class="row"></div>
+        <div class="muted">Suggested priority</div>
+        <div>${escapeHtml(e.priority || "—")}</div>
+        <div class="row"></div>
+        <div class="muted">Likely causes</div>
+        <div>${(e.causes||[]).map(c => "• " + escapeHtml(c)).join("<br>") || "—"}</div>
+        <div class="row"></div>
+        <div class="muted">Checks</div>
+        <div>${(e.checks||[]).map(c => "• " + escapeHtml(c)).join("<br>") || "—"}</div>
+        <div class="row"></div>
+        <div class="muted">Fix notes</div>
+        <div>${(e.fixes||[]).map(c => "• " + escapeHtml(c)).join("<br>") || "—"}</div>
+      </div>
+    `).join("")
+  : "<div class='muted'>No DTCs entered.</div>";
+
 
 
   document.querySelector("#view").innerHTML = `
@@ -978,10 +1015,15 @@ const techNotes = Array.isArray(outcomeNode.tech)
             ${kv("Created", created)}
           </div>
           <div class="row"></div>
-          <div class="muted">Tech notes (staff only)</div>
+          <div class="muted">DTC findings (staff only)</div>
+            ${dtcHtml}
+
+          <div class="row"></div>
+          <div class="muted">Topic tech notes (staff only)</div>
           <div class="card" style="margin-top:6px">
             ${techNotes.map(n => `• ${escapeHtml(n)}`).join("<br>") || "—"}
-        </div>
+          </div>
+
 
         </div>
       </div>
@@ -1303,92 +1345,118 @@ window.TREES = {
     }
   },
 
-  // === Check Engine Light ===
-  check_engine_light: {
-    title: "Check Engine Light",
-    entry: "q1",
-    nodes: {
-      q1: {
-        type: "single",
-        prompt: "Is the light steady or flashing?",
-        options: [
-          { label: "Steady", next: "q2_steady" },
-          { label: "Flashing", next: "o_misfire_severe" },
-          { label: "Comes and goes", next: "q2_intermit" },
-          { label: "Other (describe)", next: "q_other" }
-        ]
-      },
-      q2_steady: {
-        type: "single",
-        prompt: "Any noticeable driveability issues?",
-        options: [
-          { label: "None / mild", next: "o_scan_priority" },
-          { label: "Rough idle / low power", next: "o_scan_priority" },
-          { label: "Poor fuel economy", next: "o_scan_priority" }
-        ]
-      },
-      q2_intermit: {
-        type: "single",
-        prompt: "Correlate with wet weather or after refueling?",
-        options: [
-          { label: "After refuel", next: "o_evap_cap" },
-          { label: "Wet weather / humidity", next: "o_ignition_moisture" },
-          { label: "No clear pattern", next: "o_scan_priority" }
-        ]
-      },
+  // === Check Engine Light / Lights on Dash ===
+check_engine_light: {
+  title: "Check Engine Light / Lights on Dash",
+  entry: "q0_have_code",
+  nodes: {
+    // NEW: optional code entry first
+    q0_have_code: {
+      type: "single",
+      prompt: "Do you have a code (DTC) from a scanner you’d like to enter?",
+      options: [
+        { label: "Yes — enter code(s)", next: "q0_code_input" },
+        { label: "No / not sure",       next: "q1" }
+      ]
+    },
+    q0_code_input: {
+      type: "input",
+      prompt: "Enter any code(s) shown by your scanner (optional)",
+      placeholder: "Example: P0301, P0420, U0100…",
+      saveAs: "cel_code",
+      next: "q1"
+    },
 
-      q_other: {
-        type: "input",
-        prompt: "Describe the CEL issue:",
-        placeholder: "When it comes on, behavior changes, recent work…",
-        saveAs: "cel_other",
-        next: "o_other_cel"
-      },
-      o_other_cel: {
-        type: "outcome",
-        title: "Custom CEL description captured",
-        notes: ["Notes stored under 'cel_other'."],
-        priority: "Low"
-      },
+    // Original flow (retained)
+    q1: {
+      type: "single",
+      prompt: "Is the light steady or flashing?",
+      options: [
+        { label: "Steady",               next: "q2_steady" },
+        { label: "Flashing",             next: "o_misfire_severe" },
+        { label: "Comes and goes",       next: "q2_intermit" },
+        { label: "Other (describe)",     next: "q_other" }
+      ]
+    },
+    q2_steady: {
+      type: "single",
+      prompt: "Any noticeable drivability issues?",
+      options: [
+        { label: "None / mild",          next: "o_scan_priority" },
+        { label: "Rough idle / low power", next: "o_scan_priority" },
+        { label: "Poor fuel economy",    next: "o_scan_priority" }
+      ]
+    },
+    q2_intermit: {
+      type: "single",
+      prompt: "Correlate with wet weather or after refueling?",
+      options: [
+        { label: "After refuel",         next: "o_evap_cap" },
+        { label: "Wet weather / humidity", next: "o_ignition_moisture" },
+        { label: "No clear pattern",     next: "o_scan_priority" }
+      ]
+    },
 
-      o_misfire_severe: {
-        type: "outcome",
-        title: "Active misfire (flashing CEL)",
-        notes: [
-          "Risk of catalyst damage.",
-          "Avoid heavy load; check coil/plug/injector on affected cylinder(s) and scan now."
-        ],
-        priority: "Critical"
-      },
-      o_scan_priority: {
-        type: "outcome",
-        title: "Scan for codes to route diagnosis",
-        notes: [
-          "Common: O2/AFR sensors, EVAP small leak, MAF contamination, thermostat performance.",
-          "Capture freeze frame; verify basics."
-        ],
-        priority: "Moderate"
-      },
-      o_evap_cap: {
-        type: "outcome",
-        title: "Possible EVAP issue after refueling",
-        notes: [
-          "Loose/damaged cap or vent/purge fault.",
-          "Verify cap seal/clicks; inspect purge/vent valves if recurring."
-        ],
-        priority: "Low"
-      },
-      o_ignition_moisture: {
-        type: "outcome",
-        title: "Moisture-related ignition fault",
-        notes: [
-          "Coils/boots/wires may arc under humidity.",
-          "Inspect for carbon tracking; check cowl leaks."
-        ],
-        priority: "Moderate"
-      }
+    // Free-text
+    q_other: {
+      type: "input",
+      prompt: "Describe the light or message:",
+      placeholder: "Which icon/text, when it appears, any behavior changes…",
+      saveAs: "cel_other",
+      next: "o_other_cel"
+    },
+    o_other_cel: {
+      type: "outcome",
+      title: "Custom dash light description captured",
+      priority: "Low",
+      // Staff-only tips go in `tech`; not shown to customer screen
+      tech: ["Notes stored under 'cel_other'."]
+    },
+
+    // Outcomes (customer sees priority + risk only; tech notes hidden on customer screen)
+    o_misfire_severe: {
+      type: "outcome",
+      title: "Active misfire (flashing CEL)",
+      priority: "Critical",
+      risk: ["Risk of catalyst damage; avoid heavy load and prolonged driving."],
+      tech: [
+        "Flashing MIL indicates severe misfire.",
+        "Check coil/plug/injector on affected cylinder(s); capture freeze frame; misfire counters."
+      ]
+    },
+    o_scan_priority: {
+      type: "outcome",
+      title: "Scan for codes to route diagnosis",
+      priority: "Moderate",
+      risk: ["Drive cautiously; schedule service soon."],
+      tech: [
+        "Common findings: O2/AFR, EVAP small leak, MAF contamination, thermostat performance.",
+        "Review fuel trims/freeze frame; verify basics."
+      ]
+    },
+    o_evap_cap: {
+      type: "outcome",
+      title: "Possible EVAP issue after refueling",
+      priority: "Low",
+      risk: ["Generally safe short-term; monitor the light."],
+      tech: [
+        "Loose/damaged cap, vent/purge fault likely.",
+        "Verify cap seal/clicks; inspect purge/vent valves if recurring."
+      ]
+    },
+    o_ignition_moisture: {
+      type: "outcome",
+      title: "Moisture-related ignition fault",
+      priority: "Moderate",
+      risk: ["Drive cautiously; schedule service soon."],
+      tech: [
+        "Coils/boots/wires may arc in humidity.",
+        "Inspect for carbon tracking; check cowl leaks."
+      ]
     }
-  },
+  }
+},
+
 
   // === Battery / Charging ===
   battery_charging: {
@@ -1622,6 +1690,200 @@ vibration: {
     }
   }
 },
+
+  // === Drivability Concern ===
+  drivability: {
+    title: "Drivability Concern",
+    entry: "d1",
+    nodes: {
+      d1: {
+        type: "single",
+        prompt: "What best matches the drivability issue?",
+        options: [
+          { label: "Sluggish acceleration",           next: "d_sluggish1" },
+          { label: "Won’t go over a certain MPH",     next: "d_speedcap1" },
+          { label: "Jerking or surging while driving",next: "o_surging" },
+          { label: "Poor fuel economy",               next: "o_poor_mpg" },
+          { label: "Engine hesitation or stalling",   next: "d_hes1" },
+          { label: "Transmission slipping",           next: "o_trans_slip" },
+          { label: "Other (describe)",                next: "d_other" }
+        ]
+      },
+
+      // Free-text branch
+      d_other: {
+        type: "input",
+        prompt: "Describe the drivability concern in your own words:",
+        placeholder: "When it happens, patterns, warning lights, recent work…",
+        saveAs: "drivability_other",
+        next: "o_other_drivability"
+      },
+      o_other_drivability: {
+        type: "outcome",
+        title: "Custom drivability description captured",
+        notes: ["Notes stored under 'drivability_other'."],
+        priority: "Low"
+      },
+
+      // Sluggish acceleration branch
+      d_sluggish1: {
+        type: "single",
+        prompt: "Which describes the sluggish acceleration?",
+        options: [
+          { label: "Feels weak when pressing the pedal",              next: "o_low_power_general" },
+          { label: "RPMs flare up but vehicle barely speeds up",      next: "o_trans_slip" },
+          { label: "Only happens on hills/under load",                next: "o_load_related" },
+          { label: "Gets worse after warmup / once hot",              next: "o_after_warm" }
+        ]
+      },
+
+      // Speed cap / won’t exceed MPH
+      d_speedcap1: {
+        type: "single",
+        prompt: "How is it limited?",
+        options: [
+          { label: "Hits a wall around 20–30 MPH",                    next: "o_limp_mode" },
+          { label: "Won’t reach highway speeds",                      next: "o_fuel_air_restriction" },
+          { label: "RPM stays low despite pedal input",               next: "o_throttle_maf_issue" },
+          { label: "RPM rises but speed doesn’t (slipping sensation)",next: "o_trans_slip" }
+        ]
+      },
+
+      // Hesitation / stalling branch
+      d_hes1: {
+        type: "single",
+        prompt: "When does it hesitate or stall?",
+        options: [
+          { label: "Tip-in / taking off from a stop",                 next: "o_tipin_hesitation" },
+          { label: "At steady cruise / light throttle",               next: "o_cruise_hesitation" },
+          { label: "Stalls at idle / coming to a stop",               next: "o_idle_stall" },
+          { label: "Random; worse in wet weather",                    next: "o_ignition_moisture" }
+        ]
+      },
+
+      // Outcomes
+      o_low_power_general: {
+        type: "outcome",
+        title: "General low power complaint",
+        notes: [
+          "Verify no active limp (scan for DTCs/freeze frame).",
+          "Check air filter, intake leaks (post-MAF), MAF contamination, exhaust restriction.",
+          "Fuel pressure/volume test under load; consider O2/AFR sensor feedback and trims."
+        ],
+        priority: "High",
+        risk: ["Minimize driving; lack of power can create unsafe merge/turn situations."]
+      },
+      o_trans_slip: {
+        type: "outcome",
+        title: "Transmission slipping suspected",
+        notes: [
+          "Engine revs rise without proportional acceleration.",
+          "Check fluid level/condition, adaptives, DTCs; possible clutch/band wear or valve-body issue."
+        ],
+        priority: "High",
+        risk: ["Avoid heavy throttle; continued slipping can rapidly damage clutches."]
+      },
+      o_load_related: {
+        type: "outcome",
+        title: "Low power under load (fuel/air/exhaust) suspected",
+        notes: [
+          "Only weak on hills/load.",
+          "Inspect fuel pressure under load, MAF readings, turbo/boost leaks (if applicable), and possible clogged cat."
+        ],
+        priority: "High"
+      },
+      o_after_warm: {
+        type: "outcome",
+        title: "Symptoms after warmup (heat-related fault)",
+        notes: [
+          "Consider failing ignition coil when hot, crank/cam sensor dropout, or fuel pump losing pressure when warm."
+        ],
+        priority: "Moderate"
+      },
+      o_limp_mode: {
+        type: "outcome",
+        title: "Likely limp mode / speed limitation",
+        notes: [
+          "Hard cap at ~20–30 MPH suggests limp.",
+          "Scan for throttle body/MAF/TPS/boost faults; verify pedal vs throttle correlation and ETC faults."
+        ],
+        priority: "High",
+        risk: ["Do not drive far; limp mode indicates a protective restriction."]
+      },
+      o_fuel_air_restriction: {
+        type: "outcome",
+        title: "Fuel/air intake restriction suspected",
+        notes: [
+          "Won’t reach highway speed.",
+          "Check clogged air filter, collapsed intake hose, restricted catalytic converter, fuel filter/pump delivery."
+        ],
+        priority: "High"
+      },
+      o_throttle_maf_issue: {
+        type: "outcome",
+        title: "Throttle/MAF plausibility issue suspected",
+        notes: [
+          "Low RPM despite pedal input.",
+          "Check for DTCs; inspect throttle body carbon/position, MAF grams/sec vs RPM, intake leaks post-MAF."
+        ],
+        priority: "High"
+      },
+      o_surging: {
+        type: "outcome",
+        title: "Surging / jerking under way",
+        notes: [
+          "Look for ignition misfire under load, fuel delivery fluctuations, or torque-converter clutch shudder.",
+          "Review fuel trims; test drive with live data."
+        ],
+        priority: "High"
+      },
+      o_poor_mpg: {
+        type: "outcome",
+        title: "Poor fuel economy complaint",
+        notes: [
+          "Check tire pressure/drag, thermostat stuck open (coolant temp low), O2/AFR bias, MAF contamination, brake drag."
+        ],
+        priority: "Low"
+      },
+      o_tipin_hesitation: {
+        type: "outcome",
+        title: "Tip-in hesitation",
+        notes: [
+          "Common with dirty throttle body/MAF or weak ignition at low RPM.",
+          "Inspect throttle plate deposits; evaluate short-term trims on tip-in."
+        ],
+        priority: "Moderate"
+      },
+      o_cruise_hesitation: {
+        type: "outcome",
+        title: "Light-cruise hesitation",
+        notes: [
+          "Possible EGR flow issue (if equipped), marginal coil, or lean condition.",
+          "Check LTFT/STFT at cruise, misfire counters, EGR commanded vs actual."
+        ],
+        priority: "Moderate"
+      },
+      o_idle_stall: {
+        type: "outcome",
+        title: "Stall at idle / coming to a stop",
+        notes: [
+          "Check IAC/ETC control, vacuum leaks, dirty throttle body, or torque-converter clutch sticking engaged."
+        ],
+        priority: "High",
+        risk: ["Stalling during turns/traffic can be hazardous; reduce driving."]
+      },
+      o_ignition_moisture: {
+        type: "outcome",
+        title: "Moisture-related ignition fault",
+        notes: [
+          "Worse in wet weather.",
+          "Inspect coils/boots/wires for carbon tracking; verify cowl/water intrusion."
+        ],
+        priority: "Moderate"
+      }
+    }
+  },
+
 
 // === Other (free-text topic) ===
 other: {
