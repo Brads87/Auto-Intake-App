@@ -1894,6 +1894,374 @@ vibration: {
     }
   },
 
+  // === Basic Maintenance / Service Menu ===
+ // === Basic Maintenance / Service Menu (multi-select with per-service Q&A) ===
+maintenance: {
+  title: "Basic Maintenance / Service Menu",
+  entry: "m1",
+  nodes: {
+    // Multi select
+    m1: {
+      type: "multi",
+      prompt: "Select the maintenance you want today (choose all that apply):",
+      options: [
+        { label: "Oil change (engine)",                                key: "svc_oil" },
+        { label: "Coolant flush / exchange",                           key: "svc_coolant" },
+        { label: "Injector service (fuel system)",                     key: "svc_injector" },
+        { label: "Light tune-up (inspect/replace spark plugs as needed)", key: "svc_tune_light" },
+        { label: "Heavy tune-up (plugs + coils/wires as needed)",      key: "svc_tune_heavy" },
+        { label: "Air filter replacement",                              key: "svc_air" },
+        { label: "Cabin filter replacement",                            key: "svc_cabin" },
+        { label: "Brake fluid flush",                                   key: "svc_brake" },
+        { label: "Transmission service (if serviceable)",               key: "svc_trans" },
+        { label: "Tire rotation / balance check",                       key: "svc_tires" }
+      ],
+      next: "m2_mileage"
+    },
+
+    // Optional miles since last service
+    m2_mileage: {
+      type: "input",
+      prompt: "Optional: How many miles since your last routine maintenance?",
+      placeholder: "Example: 5,000",
+      saveAs: "maint_miles_since",
+      next: "m_gate_oil"
+    },
+
+    /* ======== OIL CHANGE ======== */
+    m_gate_oil: {
+      type: "single",
+      prompt: "Did you select Oil change?",
+      options: [
+        { label: "Yes", next: "m_oil_q1" },
+        { label: "No",  next: "m_gate_coolant" }
+      ]
+    },
+    m_oil_q1: {
+      type: "single",
+      prompt: "Oil type preference?",
+      options: [
+        { label: "Full synthetic",       next: "m_oil_q2" },
+        { label: "Synthetic blend",      next: "m_oil_q2" },
+        { label: "Conventional",         next: "m_oil_q2" },
+        { label: "No preference / OEM",  next: "m_oil_q2" }
+      ]
+    },
+    m_oil_q2: {
+      type: "single",
+      prompt: "Any concerns we should note before oil service?",
+      options: [
+        { label: "Oil leak / spots on ground", next: "m_oil_q3" },
+        { label: "Burning oil / low between changes", next: "m_oil_q3" },
+        { label: "Oil light / pressure warning", next: "m_oil_q3" },
+        { label: "No concerns", next: "m_gate_coolant" }
+      ]
+    },
+    m_oil_q3: {
+      type: "input",
+      prompt: "Describe the oil concern (optional):",
+      placeholder: "Where leaking, how much oil used, warning details…",
+      saveAs: "oil_concern",
+      next: "m_gate_coolant"
+    },
+
+    /* ======== COOLANT FLUSH ======== */
+    m_gate_coolant: {
+      type: "single",
+      prompt: "Did you select Coolant flush / exchange?",
+      options: [
+        { label: "Yes", next: "m_cool_q1" },
+        { label: "No",  next: "m_gate_injector" }
+      ]
+    },
+    m_cool_q1: {
+      type: "single",
+      prompt: "Choose coolant service:",
+      options: [
+        { label: "Exchange (machine or drain/fill to spec)", next: "m_cool_q2" },
+        { label: "Diagnose cooling issue first",             next: "m_cool_q2" }
+      ]
+    },
+    m_cool_q2: {
+      type: "multi",
+      prompt: "Any current cooling system symptoms? (check all that apply)",
+      options: [
+        { label: "Overheating / runs hot",            key: "cool_sym_hot" },
+        { label: "Low coolant / need to top off",     key: "cool_sym_low" },
+        { label: "No heat from HVAC at idle",         key: "cool_sym_heat" },
+        { label: "Visible leaks / sweet smell",       key: "cool_sym_leak" },
+        { label: "No symptoms — preventative",        key: "cool_sym_none" }
+      ],
+      next: "m_cool_ack"
+    },
+    m_cool_ack: {
+      type: "input",
+      prompt: "Acknowledgment: coolant service may expose pre-existing leaks or weak components. Type your initials to confirm:",
+      placeholder: "Initials (optional but recommended)",
+      saveAs: "cool_ack_initials",
+      next: "m_gate_injector"
+    },
+
+    /* ======== INJECTOR SERVICE ======== */
+    m_gate_injector: {
+      type: "single",
+      prompt: "Did you select Injector service?",
+      options: [
+        { label: "Yes", next: "m_inj_q1" },
+        { label: "No",  next: "m_gate_tune_light" }
+      ]
+    },
+    m_inj_q1: {
+      type: "multi",
+      prompt: "Current driveability symptoms? (check all that apply)",
+      options: [
+        { label: "Rough idle / stumble",          key: "inj_sym_idle" },
+        { label: "Hesitation on take-off",        key: "inj_sym_tipin" },
+        { label: "Poor MPG",                      key: "inj_sym_mpg" },
+        { label: "Misfire codes (e.g., P030x)",   key: "inj_sym_misfire" },
+        { label: "None — preventative cleaning",  key: "inj_sym_none" }
+      ],
+      next: "m_inj_q2"
+    },
+    m_inj_q2: {
+      type: "single",
+      prompt: "Fuel system type (if known):",
+      options: [
+        { label: "Direct injection (GDI)", next: "m_inj_ack" },
+        { label: "Port injection (PFI)",   next: "m_inj_ack" },
+        { label: "Unknown",                next: "m_inj_ack" }
+      ]
+    },
+    m_inj_ack: {
+      type: "input",
+      prompt: "Acknowledgment: cleaning does not fix mechanical injector failure; leaks/faults may require parts. Type initials:",
+      placeholder: "Initials (optional but recommended)",
+      saveAs: "inj_ack_initials",
+      next: "m_gate_tune_light"
+    },
+
+    /* ======== LIGHT TUNE-UP ======== */
+    m_gate_tune_light: {
+      type: "single",
+      prompt: "Did you select Light tune-up?",
+      options: [
+        { label: "Yes", next: "m_tl_q1" },
+        { label: "No",  next: "m_gate_tune_heavy" }
+      ]
+    },
+    m_tl_q1: {
+      type: "single",
+      prompt: "Spark plug service preference:",
+      options: [
+        { label: "Inspect and replace as needed", next: "m_tl_q2" },
+        { label: "Replace plugs (OEM spec)",      next: "m_tl_q2" }
+      ]
+    },
+    m_tl_q2: {
+      type: "multi",
+      prompt: "Any symptoms to note?",
+      options: [
+        { label: "Hard start / long crank", key: "tl_sym_start" },
+        { label: "Rough idle",              key: "tl_sym_idle" },
+        { label: "Low power / hesitation",  key: "tl_sym_power" },
+        { label: "No symptoms",             key: "tl_sym_none" }
+      ],
+      next: "m_gate_tune_heavy"
+    },
+
+    /* ======== HEAVY TUNE-UP ======== */
+    m_gate_tune_heavy: {
+      type: "single",
+      prompt: "Did you select Heavy tune-up?",
+      options: [
+        { label: "Yes", next: "m_th_q1" },
+        { label: "No",  next: "m_gate_air" }
+      ]
+    },
+    m_th_q1: {
+      type: "multi",
+      prompt: "Heavy tune-up typically includes plugs and coils/wires (as applicable). Any misfire/driveability concerns?",
+      options: [
+        { label: "Active misfire / flashing CEL", key: "th_sym_severe" },
+        { label: "Intermittent misfire",          key: "th_sym_intermit" },
+        { label: "Poor MPG / sluggish",           key: "th_sym_mpg" },
+        { label: "No symptoms — preventative",    key: "th_sym_none" }
+      ],
+      next: "m_gate_air"
+    },
+
+    /* ======== AIR FILTER ======== */
+    m_gate_air: {
+      type: "single",
+      prompt: "Did you select Air filter replacement?",
+      options: [
+        { label: "Yes", next: "m_air_q1" },
+        { label: "No",  next: "m_gate_cabin" }
+      ]
+    },
+    m_air_q1: {
+      type: "single",
+      prompt: "Last time air filter was replaced?",
+      options: [
+        { label: "< 15,000 miles", next: "m_gate_cabin" },
+        { label: "15–30,000 miles", next: "m_gate_cabin" },
+        { label: "> 30,000 miles / unknown", next: "m_gate_cabin" }
+      ]
+    },
+
+    /* ======== CABIN FILTER ======== */
+    m_gate_cabin: {
+      type: "single",
+      prompt: "Did you select Cabin filter replacement?",
+      options: [
+        { label: "Yes", next: "m_cabin_q1" },
+        { label: "No",  next: "m_gate_brake" }
+      ]
+    },
+    m_cabin_q1: {
+      type: "multi",
+      prompt: "Any HVAC concerns?",
+      options: [
+        { label: "Reduced airflow",  key: "cabin_sym_flow" },
+        { label: "Odors / musty",   key: "cabin_sym_odor" },
+        { label: "No concerns",     key: "cabin_sym_none" }
+      ],
+      next: "m_gate_brake"
+    },
+
+    /* ======== BRAKE FLUID FLUSH ======== */
+    m_gate_brake: {
+      type: "single",
+      prompt: "Did you select Brake fluid flush?",
+      options: [
+        { label: "Yes", next: "m_brake_q1" },
+        { label: "No",  next: "m_gate_trans" }
+      ]
+    },
+    m_brake_q1: {
+      type: "single",
+      prompt: "ABS/Brake indicators or pedal feel concerns?",
+      options: [
+        { label: "Soft / spongy pedal",  next: "m_brake_q2" },
+        { label: "Brake/ABS light on",   next: "m_brake_q2" },
+        { label: "No concerns",          next: "m_brake_q2" }
+      ]
+    },
+    m_brake_q2: {
+      type: "input",
+      prompt: "If any brake concerns, describe (optional):",
+      placeholder: "Pulls, noise, recent brake work, etc.",
+      saveAs: "brake_concern",
+      next: "m_gate_trans"
+    },
+
+    /* ======== TRANSMISSION SERVICE (with QA & acknowledgment) ======== */
+    m_gate_trans: {
+      type: "single",
+      prompt: "Did you select Transmission service?",
+      options: [
+        { label: "Yes", next: "m_trans_q1" },
+        { label: "No",  next: "m_gate_tires" }
+      ]
+    },
+    m_trans_q1: {
+      type: "multi",
+      prompt: "Any transmission symptoms right now? (check all that apply)",
+      options: [
+        { label: "Harsh / bumpy shifts",                  key: "trans_sym_harsh" },
+        { label: "RPM flare between gears",               key: "trans_sym_flare" },
+        { label: "Slip under load / acceleration",        key: "trans_sym_slip" },
+        { label: "Delay engaging Drive/Reverse",          key: "trans_sym_delay" },
+        { label: "Shudder / vibration on light throttle", key: "trans_sym_shudder" },
+        { label: "Whine / grinding noise",                key: "trans_sym_noise" },
+        { label: "Warning light / message",               key: "trans_sym_light" },
+        { label: "Fluid leak spotted",                    key: "trans_sym_leak" },
+        { label: "No symptoms — preventative service",    key: "trans_sym_none" }
+      ],
+      next: "m_trans_q2"
+    },
+    m_trans_q2: {
+      type: "input",
+      prompt: "When was the LAST transmission service? (time/mileage if known)",
+      placeholder: "Example: ~40,000 miles ago / last year / unknown",
+      saveAs: "trans_last_service",
+      next: "m_trans_q3"
+    },
+    m_trans_q3: {
+      type: "single",
+      prompt: "Which transmission type do you have?",
+      options: [
+        { label: "Automatic (traditional AT)", next: "m_trans_q4" },
+        { label: "CVT",                         next: "m_trans_q4" },
+        { label: "Dual-clutch (DCT/DSG)",       next: "m_trans_q4" },
+        { label: "Manual",                      next: "m_trans_q4" },
+        { label: "Unknown",                     next: "m_trans_q4" }
+      ]
+    },
+    m_trans_q4: {
+      type: "input",
+      prompt: "If a warning light/message or leak is present, describe it (optional):",
+      placeholder: "Example: 'Transmission Overheat' / small red fluid spots overnight…",
+      saveAs: "trans_light_or_leak_desc",
+      next: "m_trans_ack"
+    },
+    m_trans_ack: {
+      type: "input",
+      prompt: "Acknowledgment: Service does not repair pre-existing internal faults and may reveal wear. Type initials to proceed:",
+      placeholder: "Initials (required to proceed with transmission service)",
+      saveAs: "trans_ack_initials",
+      next: "m_gate_tires"
+    },
+
+    /* ======== TIRES ======== */
+    m_gate_tires: {
+      type: "single",
+      prompt: "Did you select Tire rotation / balance check?",
+      options: [
+        { label: "Yes", next: "m_tire_q1" },
+        { label: "No",  next: "o_summary" }
+      ]
+    },
+    m_tire_q1: {
+      type: "multi",
+      prompt: "Any tire/wheel symptoms?",
+      options: [
+        { label: "Vibration at highway speed",     key: "tire_sym_vibe" },
+        { label: "Pulling / alignment concerns",   key: "tire_sym_align" },
+        { label: "Uneven wear / cupping",          key: "tire_sym_wear" },
+        { label: "TPMS light on",                  key: "tire_sym_tpms" },
+        { label: "No concerns",                    key: "tire_sym_none" }
+      ],
+      next: "o_summary"
+    },
+
+    /* ======== CONSOLIDATED OUTCOME ======== */
+    o_summary: {
+      type: "outcome",
+      title: "Maintenance request recorded",
+      priority: "Low",
+      risk: [
+        "Routine service. If any safety warnings/lights exist, drive cautiously and follow technician guidance."
+      ],
+      tech: [
+        // What gets saved where (helps staff on back end)
+        "Trail contains: selected services (svc_* keys), mileage since last (maint_miles_since), and per-service answers.",
+        "Oil: oil_concern (if any). Note preferences from selection.",
+        "Coolant: cool_sym_* flags; cool_ack_initials if provided.",
+        "Injector: inj_sym_* flags; inj_ack_initials if provided; GDI vs PFI selection.",
+        "Light/Heavy tune-up: tl_sym_* / th_sym_* flags.",
+        "Air/Cabin: air/cabin last/concern selections (cabin_sym_*).",
+        "Brake flush: brake_concern if provided.",
+        "Transmission: trans_sym_* flags, trans_last_service, trans_light_or_leak_desc, trans_ack_initials (required), type selection.",
+        "Tires: tire_sym_* flags.",
+        "Technician: quote OEM-spec fluids/parts; advise diagnosis first where symptoms are present."
+      ]
+    }
+  }
+},
+
+
+
 
 // === Other (free-text topic) ===
 other: {
