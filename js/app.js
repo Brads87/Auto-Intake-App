@@ -975,6 +975,12 @@ const dtcHtml = dtcEntries.length
       </div>
     `).join("")
   : "<div class='muted'>No DTCs entered.</div>";
+  // Prefer DTC-specific tech notes if present; otherwise fall back to topic tech notes
+const dtcTechNotes = dtcEntries.flatMap(e => (e.tech && Array.isArray(e.tech)) ? e.tech
+                                         : (e.fixes && Array.isArray(e.fixes)) ? e.fixes
+                                         : []);
+const techNotesEffective = dtcTechNotes.length ? dtcTechNotes : techNotes;
+
 
 
 
@@ -1019,10 +1025,14 @@ const dtcHtml = dtcEntries.length
             ${dtcHtml}
 
           <div class="row"></div>
-          <div class="muted">Topic tech notes (staff only)</div>
+          <div class="muted">Tech notes (staff — auto)</div>
           <div class="card" style="margin-top:6px">
-            ${techNotes.map(n => `• ${escapeHtml(n)}`).join("<br>") || "—"}
+            ${techNotesEffective.map(n => `• ${escapeHtml(n)}`).join("<br>") || "—"}
+            ${dtcTechNotes.length
+              ? `<div class="muted" style="margin-top:6px">Source: DTC-specific guidance</div>`
+              : `<div class="muted" style="margin-top:6px">Source: Topic guidance</div>`}
           </div>
+
 
 
         </div>

@@ -37,12 +37,12 @@
       checks: ["Heater resistance", "Signal switching", "Power/ground"],
       fixes: ["Replace O2; repair wiring"] },
 
-    { match: /^P013[6-9]|^P014[0-1]$/i, title: "P0136–P0141 — O2 Sensor Bank1 Sensor2", priority: "Low",
+    { match: /^(?:P013[6-9]|P014[0-1])$/i, title: "P0136–P0141 — O2 Sensor Bank1 Sensor2", priority: "Low",
       causes: ["Aged downstream O2", "Heater/wiring fault"],
       checks: ["Downstream signal flat vs upstream switching", "Heater circuit test"],
       fixes: ["Replace downstream O2; repair wiring"] },
 
-    { match: /^P017[1-2-4-5]$/i, title: "P0171/172/174/175 — System Too Lean/Rich", priority: "High",
+    { match: /^(?:P0171|P0172|P0174|P0175)$/i, title: "P0171/172/174/175 — System Too Lean/Rich", priority: "High",
       causes: ["Vacuum leaks (lean)", "MAF contamination", "Fuel delivery or leaking injectors (rich)"],
       checks: ["Fuel trims STFT/LTFT", "Smoke test", "Fuel pressure/volume"],
       fixes: ["Fix leaks", "Service MAF", "Correct fuel delivery"] },
@@ -84,6 +84,7 @@
       causes: ["Aged/overheated cat", "Exhaust leak", "Upstream faults (misfire/mixture)"],
       checks: ["Up vs down O2 patterns", "Check misfires/leaks"],
       fixes: ["Address root cause; cat as needed"] },
+
     { match: /^P0430$/i, title: "P0430 — Catalyst Efficiency (Bank 2)", priority: "Moderate",
       causes: ["Same as P0420 (Bank 2)"],
       checks: ["Same as P0420"],
@@ -182,7 +183,7 @@
       checks: ["Inverter temps/coolant flow", "Motor speed correlation"],
       fixes: ["Cooling/service per OEM; component repair"] },
 
-    // --- FALLBACK FAMILY RULES (broad nets for coverage) ---
+    // --- FALLBACK FAMILY RULES ---
     { match: /^P0[0-9]{3}$/i, title: "Generic OBD-II Powertrain Code (P0xxx)", priority: "Moderate",
       causes: ["Generic powertrain fault — see sub-system"],
       checks: ["Full scan and freeze frame", "Live data review"],
