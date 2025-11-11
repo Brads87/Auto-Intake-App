@@ -114,7 +114,7 @@
     { match: /^P001[0-9]$/i, title: "P0010–P0019 — VVT (Camshaft Position Actuator) Range/Perf", priority: "High",
       causes: ["OCV (oil control valve) sticking", "Sludge/low oil", "Timing chain stretch", "Wiring fault"],
       checks: ["Commanded vs actual cam angle (scan)", "OCV duty/response", "Oil condition/level", "Mechanical timing"],
-      fixes: ["Clean/replace OCV", "Oil service", "Timing repair if out-of-range"],
+      fixes: ["Clean/replace OCV", "Oil service", "Timing repair", "Cam/Crank Sensor Replacement"],
       tech: ["Graph desired vs actual angle; look for lagging response"] },
 
     // Crank sensor
